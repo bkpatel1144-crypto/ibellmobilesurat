@@ -4,7 +4,8 @@ import { Plus, Search, ShoppingCart, EyeOff } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, Segmented, useConfirm } from '../components/ui';
-import RowActions from '../components/RowActions';
+import { DocRowActions } from '../components/DocActions';
+import { saleMessage } from '../lib/share';
 import { useToast } from '../context/ToastContext';
 import { deleteSale } from '../lib/db';
 import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
@@ -194,7 +195,16 @@ export default function Sales() {
                         </div>
                       </td>
                       <td className="actions">
-                        <RowActions
+                        <DocRowActions
+                          doc={{
+                            title: `Bill ${x.invoiceNo}`,
+                            build: async (output) => {
+                              const { invoicePdf } = await import('../lib/export');
+                              return invoicePdf(x, settings, { action: output === 'save' ? 'download' : output });
+                            },
+                            message: saleMessage(x, settings),
+                            phone: x.customerPhone || data.parties.find((p) => p.id === x.partyId)?.phone,
+                          }}
                           onEdit={() => navigate(`/sales/${x.id}?edit=1`)}
                           onDelete={canDelete ? () => remove(x) : null}
                           editLabel={`Edit ${x.invoiceNo}`}

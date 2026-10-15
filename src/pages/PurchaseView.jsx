@@ -9,6 +9,9 @@ import { Empty, StatusChip, useConfirm } from '../components/ui';
 import { IdProofView } from '../components/IdProof';
 import SendRepairModal from '../components/SendRepairModal';
 import PaymentForm from '../components/PaymentForm';
+import DocActions from '../components/DocActions';
+import MoreMenu from '../components/MoreMenu';
+import { purchaseMessage } from '../lib/share';
 import { deletePurchase } from '../lib/db';
 import { accountName } from '../lib/ledger';
 import { returnablePurchaseLines } from '../lib/returns';
@@ -61,40 +64,9 @@ export default function PurchaseView() {
     }
   };
 
-  const voucher = async () => {
-    const { exportTablePdf } = await import('../lib/export');
-    await exportTablePdf({
-      settings,
-      title: 'Purchase Voucher',
-      rightLines: [`No: ${p.purchaseNo}`, `Date: ${fmtDate(p.date)}`],
-      meta: [
-        ['Supplier', p.partyName],
-        ...(p.supplierBillNo ? [['Supplier bill', p.supplierBillNo]] : []),
-      ],
-      columns: [
-        { header: '#', key: 'n' },
-        { header: 'Device', key: 'device' },
-        { header: 'IMEI', key: 'imei' },
-        { header: 'Condition', key: 'cond' },
-        { header: 'Amount', key: 'price', money: true },
-      ],
-      rows: p.items.map((i, n) => ({
-        n: n + 1,
-        device: [i.brand, i.model, i.variant, i.color].filter(Boolean).join(' '),
-        imei: [i.imei, i.imei2].filter(Boolean).join(' / '),
-        cond: i.condition,
-        price: i.price,
-      })),
-      summary: [
-        ['Subtotal', `Rs. ${plain(p.subtotal)}`],
-        ...(num(p.otherCharges) ? [['Other charges', `Rs. ${plain(p.otherCharges)}`]] : []),
-        ...(num(p.discount) ? [['Discount', `- Rs. ${plain(p.discount)}`]] : []),
-        ['Total', `Rs. ${plain(p.total)}`],
-        ['Paid', `Rs. ${plain(p.paid)}`],
-        ['Balance', `Rs. ${plain(due)}`],
-      ],
-      filename: p.purchaseNo,
-    });
+  const voucher = async (output = 'save') => {
+    const { purchaseVoucherPdf } = await import('../lib/export');
+    return purchaseVoucherPdf(p, settings, { output });
   };
 
   return (
@@ -116,11 +88,15 @@ export default function PurchaseView() {
             >
               <Barcode size={16} /> {labelBusy ? '…' : 'Labels'}
             </button>
-            <button className="btn" onClick={voucher}><FileText size={16} /> PDF</button>
+            <DocActions title={`Purchase ${p.purchaseNo}`} build={voucher} message={purchaseMessage(p, settings)} phone={data.parties.find((x) => x.id === p.partyId)?.phone} />
             <Link className="btn" to={`/purchases/${p.id}/edit`}><Pencil size={16} /> Edit</Link>
-            {canReturn.size > 0 && (
-              <Link className="btn" to={`/returns/new?kind=purchase&bill=${p.id}`}><Redo2 size={16} /> Return to supplier</Link>
-            )}
+            <MoreMenu
+              items={[
+                { label: 'Download PDF', icon: FileText, onClick: () => voucher() },
+                { label: 'Return to supplier', icon: Redo2, to: `/returns/new?kind=purchase&bill=${p.id}`, hidden: !canReturn.size },
+                { label: 'Delete purchase', icon: Trash2, onClick: remove, danger: true, hidden: !canDelete },
+              ]}
+            />
             {due < -0.004 && notes.length > 0 && (
               <button
                 className="btn btn-primary"
@@ -132,7 +108,6 @@ export default function PurchaseView() {
                 <Wallet size={16} /> Receive refund
               </button>
             )}
-            {canDelete && <button className="btn btn-danger" onClick={remove} aria-label="Delete purchase"><Trash2 size={16} /></button>}
             {due > 0 && (
               <button
                 className="btn btn-primary"

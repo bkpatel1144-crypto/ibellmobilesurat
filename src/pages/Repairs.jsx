@@ -167,13 +167,13 @@ export default function Repairs() {
                           onDelete={canDelete ? () => remove(r) : null}
                           editLabel="Edit repair"
                           deleteLabel={r.status === 'done' ? 'Delete repair' : 'Cancel repair'}
+                          more={[{ label: 'IMEI timeline', icon: History, to: `/timeline/${r.imei}` }]}
                         >
                           {r.status === 'in_repair' && (
                             <button className="btn btn-sm btn-primary" onClick={() => setCompleting(r)}>
                               <CircleCheckBig size={14} /> Repair done
                             </button>
                           )}
-                          <Link className="btn btn-sm btn-icon" to={`/timeline/${r.imei}`} aria-label="IMEI timeline" title="Timeline"><History size={14} /></Link>
                         </RowActions>
                       </td>
                     </tr>

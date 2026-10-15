@@ -8,6 +8,7 @@ import { accountList } from '../lib/ledger';
 import { isExpired } from '../lib/audit';
 import { useAuth } from './AuthContext';
 import { saveMember, emailKey, STAFF_DEFAULTS } from '../lib/team';
+import { WA_DEFAULTS } from '../lib/share';
 
 const COLLECTIONS = ['parties', 'devices', 'purchases', 'sales', 'returns', 'repairs', 'payments', 'expenses', 'banks', 'audits', 'team'];
 
@@ -47,6 +48,7 @@ export const DEFAULT_SETTINGS = {
   labelCodePt: 8,
   labelInfoPt: 10,
   autoPrintLabels: false,
+  ...WA_DEFAULTS, // WhatsApp message wording
 };
 
 const DataContext = createContext(null);

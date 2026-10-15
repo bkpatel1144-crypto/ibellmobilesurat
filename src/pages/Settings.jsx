@@ -45,6 +45,7 @@ import { fileToLogo } from '../lib/files';
 import { FONTS, ACCENTS, DUOS, TONES, preloadFonts, textOn } from '../lib/prefs';
 import { fmtDate, today, addDays } from '../lib/format';
 import { validGstin, stateOf, stateName } from '../lib/gst';
+import { WA_DEFAULTS, WA_FIELDS } from '../lib/share';
 import { PERMS, STAFF_DEFAULTS, saveMember, removeMember, createLogin, emailKey } from '../lib/team';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -55,6 +56,7 @@ const FIELDS = [
   'snPrefix', 'snNext', 'labelWidth', 'labelHeight', 'labelShowBattery', 'autoPrintLabels',
   'labelTitlePt', 'labelCodePt', 'labelInfoPt', 'labelShowWarranty',
   'gstEnabled', 'gstRate', 'gstOn', 'gstInclusive', 'hsnDefault',
+  'waSale', 'waPurchase', 'waReturn', 'waLedger',
 ];
 
 const SAMPLE_DEVICE = { brand: 'Apple', model: 'iPhone 15 Pro', variant: '256', color: 'White', imei: '355262965973925', battery: 95, warranty: '6 Months' };
@@ -300,6 +302,23 @@ export default function Settings() {
                 <Field label="Footer line" style={{ marginTop: 12 }}>
                   <input className="input" value={f.invoiceFooter} onChange={set('invoiceFooter')} />
                 </Field>
+              </Section>
+              <Section
+                title="WhatsApp messages"
+                desc="Sent with the PDF when you tap WhatsApp on a bill, purchase, return or ledger. Words in {braces} are filled in for you."
+              >
+                <div className="stack">
+                  {WA_FIELDS.map(([key, label, words]) => (
+                    <Field key={key} label={label} hint={`Can use: ${words}`}>
+                      <textarea className="textarea" rows={4} value={f[key] ?? WA_DEFAULTS[key]} onChange={set(key)} />
+                      {f[key] !== WA_DEFAULTS[key] && (
+                        <button type="button" className="btn btn-ghost btn-sm" style={{ justifySelf: 'start' }} onClick={() => set(key)({ target: { value: WA_DEFAULTS[key] } })}>
+                          Reset to default
+                        </button>
+                      )}
+                    </Field>
+                  ))}
+                </div>
               </Section>
             </form>
           )}

@@ -87,10 +87,25 @@ const tableTheme = {
 };
 
 /**
+ * How a finished PDF leaves: 'save' downloads it, 'print' opens the print dialog,
+ * 'blob' returns it as a File (for WhatsApp sharing and the in-app preview).
+ */
+function finish(doc, name, output = 'save') {
+  if (output === 'blob') return new File([doc.output('blob')], `${name}.pdf`, { type: 'application/pdf' });
+  if (output === 'print') {
+    doc.autoPrint();
+    window.open(doc.output('bloburl'), '_blank');
+    return null;
+  }
+  doc.save(`${name}.pdf`);
+  return null;
+}
+
+/**
  * Generic report PDF.
  * columns: [{ header, key, align?: 'right', money?: true }]
  */
-export async function exportTablePdf({ settings, title, rightLines = [], meta = [], columns, rows, foot, summary = [], filename, landscape }) {
+export async function exportTablePdf({ settings, title, rightLines = [], meta = [], columns, rows, foot, summary = [], filename, landscape, output = 'save' }) {
   const { jsPDF, autoTable } = await loadPdf();
   const doc = new jsPDF({ orientation: landscape ? 'landscape' : 'portrait', unit: 'mm', format: 'a4' });
   let y = drawHeader(doc, settings, title, rightLines);
@@ -136,7 +151,7 @@ export async function exportTablePdf({ settings, title, rightLines = [], meta = 
   }
 
   drawFooter(doc, settings);
-  doc.save(`${filename}.pdf`);
+  return finish(doc, filename, output);
 }
 
 /** Generic report Excel (.xlsx) with a letterhead block, bold header row and number formats. */
@@ -371,23 +386,18 @@ export async function invoicePdf(sale, settings, { action = 'download' } = {}) {
   }
 
   drawFooter(doc, settings);
-  if (action === 'print') {
-    doc.autoPrint();
-    const url = doc.output('bloburl');
-    window.open(url, '_blank');
-  } else {
-    doc.save(`${sale.invoiceNo}.pdf`);
-  }
+  return finish(doc, sale.invoiceNo, action === 'download' ? 'save' : action);
 }
 
 /** Credit Note (sales return) / Debit Note (purchase return) - same layout as the other vouchers. */
-export async function returnNotePdf(note, settings, { refunded = 0 } = {}) {
+export async function returnNotePdf(note, settings, { refunded = 0, output = 'save' } = {}) {
   const sale = note.kind === 'sale';
   const gst = sale && num(note.tax) > 0;
   const rate = num(note.taxPercent);
   const rs = (v) => `Rs. ${plain(v)}`;
   const adjusted = num(note.total) - num(refunded);
-  await exportTablePdf({
+  return exportTablePdf({
+    output,
     settings,
     title: sale ? (gst ? 'Credit Note' : 'Sales Return') : 'Debit Note',
     rightLines: [`No: ${note.returnNo}`, `Date: ${fmtDate(note.date)}`],
@@ -438,5 +448,44 @@ export async function returnNotePdf(note, settings, { refunded = 0 } = {}) {
       ...(Math.abs(adjusted) > 0.004 ? [['Adjusted in account', rs(adjusted)]] : []),
     ],
     filename: note.returnNo,
+  });
+}
+
+/** Purchase voucher (also used from the purchases list). */
+export function purchaseVoucherPdf(p, settings, { output = 'save' } = {}) {
+  const due = num(p.due ?? num(p.total) - num(p.paid));
+  return exportTablePdf({
+    output,
+    settings,
+    title: 'Purchase Voucher',
+    rightLines: [`No: ${p.purchaseNo}`, `Date: ${fmtDate(p.date)}`],
+    meta: [
+      ['Supplier', p.partyName],
+      ...(p.supplierBillNo ? [['Supplier bill', p.supplierBillNo]] : []),
+    ],
+    columns: [
+      { header: '#', key: 'n' },
+      { header: 'Device', key: 'device' },
+      { header: 'IMEI', key: 'imei' },
+      { header: 'Condition', key: 'cond' },
+      { header: 'Amount', key: 'price', money: true },
+    ],
+    rows: p.items.map((i, n) => ({
+      n: n + 1,
+      device: [i.brand, i.model, i.variant, i.color].filter(Boolean).join(' '),
+      imei: [i.imei, i.imei2].filter(Boolean).join(' / '),
+      cond: i.condition,
+      price: i.price,
+    })),
+    summary: [
+      ['Subtotal', `Rs. ${plain(p.subtotal)}`],
+      ...(num(p.otherCharges) ? [['Other charges', `Rs. ${plain(p.otherCharges)}`]] : []),
+      ...(num(p.discount) ? [['Discount', `- Rs. ${plain(p.discount)}`]] : []),
+      ['Total', `Rs. ${plain(p.total)}`],
+      ['Paid', `Rs. ${plain(p.paid)}`],
+      ...(num(p.returned) > 0 ? [['Returned (debit notes)', `- Rs. ${plain(p.returned)}`], ['Refund received', `Rs. ${plain(p.refunded)}`]] : []),
+      [due < -0.004 ? 'Supplier owes' : 'Balance', `Rs. ${plain(Math.abs(due))}`],
+    ],
+    filename: p.purchaseNo,
   });
 }

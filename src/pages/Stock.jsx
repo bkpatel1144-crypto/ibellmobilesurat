@@ -214,33 +214,19 @@ export default function Stock() {
                           onDelete={canDelete && d.status === 'in_stock' ? () => remove(d) : null}
                           editLabel="Edit device"
                           deleteLabel="Delete device"
+                          more={[
+                            { label: 'Send to repair', icon: Wrench, onClick: () => setRepairDevice(d), hidden: d.status !== 'in_stock' },
+                            { label: 'Return to supplier', icon: Redo2, to: `/returns/new?kind=purchase&bill=${d.purchaseId}&device=${d.id}`, hidden: d.status !== 'in_stock' },
+                            { label: 'Sales return', icon: Undo2, to: `/returns/new?kind=sale&bill=${d.saleId}&device=${d.id}`, hidden: d.status !== 'sold' },
+                            { label: 'Print label', icon: Barcode, onClick: () => printLabelsFor([d]), disabled: labelBusy },
+                            { label: 'IMEI timeline', icon: History, to: `/timeline/${d.imei}` },
+                          ]}
                         >
                           {d.status === 'in_stock' && (
-                            <>
-                              <button className="btn btn-sm btn-primary" onClick={() => navigate(`/sales/new?device=${d.id}`)} title="Sell">
-                                <ShoppingCart size={14} /> Sell
-                              </button>
-                              <button className="btn btn-sm btn-icon" onClick={() => setRepairDevice(d)} aria-label="Send to repair" title="Send to repair">
-                                <Wrench size={14} />
-                              </button>
-                            </>
+                            <button className="btn btn-sm btn-primary" onClick={() => navigate(`/sales/new?device=${d.id}`)} title="Sell">
+                              <ShoppingCart size={14} /> Sell
+                            </button>
                           )}
-                          {d.status === 'sold' && (
-                            <Link className="btn btn-sm btn-icon" to={`/returns/new?kind=sale&bill=${d.saleId}&device=${d.id}`} aria-label="Sales return" title="Sales return (customer brings it back)">
-                              <Undo2 size={14} />
-                            </Link>
-                          )}
-                          {d.status === 'in_stock' && (
-                            <Link className="btn btn-sm btn-icon" to={`/returns/new?kind=purchase&bill=${d.purchaseId}&device=${d.id}`} aria-label="Return to supplier" title="Return to supplier">
-                              <Redo2 size={14} />
-                            </Link>
-                          )}
-                          <button className="btn btn-sm btn-icon" disabled={labelBusy} onClick={() => printLabelsFor([d])} aria-label="Print label" title="Print label">
-                            <Barcode size={14} />
-                          </button>
-                          <Link className="btn btn-sm btn-icon" to={`/timeline/${d.imei}`} aria-label="IMEI timeline" title="Timeline">
-                            <History size={14} />
-                          </Link>
                         </RowActions>
                       </td>
                     </tr>

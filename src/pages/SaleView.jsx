@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Trash2, Printer, Download, Wallet, History, EyeOff, Eye, Pencil, Undo2 } from 'lucide-react';
 import SaleEditModal from '../components/SaleEditModal';
+import DocActions from '../components/DocActions';
+import MoreMenu from '../components/MoreMenu';
+import { saleMessage } from '../lib/share';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
@@ -90,13 +93,25 @@ export default function SaleView() {
         }
         actions={
           <>
-            <button className="btn" onClick={() => pdf('download')} disabled={Boolean(busy)} aria-label="Download PDF"><Download size={16} /></button>
+            <DocActions
+              title={`Bill ${s.invoiceNo}`}
+              build={async (output) => {
+                const { invoicePdf } = await import('../lib/export');
+                return invoicePdf(s, settings, { action: output === 'save' ? 'download' : output });
+              }}
+              message={saleMessage(s, settings)}
+              phone={s.customerPhone || data.parties.find((x) => x.id === s.partyId)?.phone}
+            />
             <button className="btn" onClick={() => pdf('print')} disabled={Boolean(busy)}><Printer size={16} /> Print</button>
             <button className="btn" onClick={() => setEditing(true)}><Pencil size={16} /> Edit</button>
-            {canReturn.size > 0 && (
-              <Link className="btn" to={`/returns/new?kind=sale&bill=${s.id}`}><Undo2 size={16} /> Return</Link>
-            )}
-            {canDelete && <button className="btn btn-danger" onClick={remove} aria-label="Delete bill"><Trash2 size={16} /></button>}
+            <MoreMenu
+              items={[
+                { label: 'Download PDF', icon: Download, onClick: () => pdf('download') },
+                { label: 'Return phones', icon: Undo2, to: `/returns/new?kind=sale&bill=${s.id}`, hidden: !canReturn.size },
+                { label: s.hidden ? 'Make visible' : 'Make private', icon: s.hidden ? Eye : EyeOff, onClick: togglePrivate, hidden: !privacy.unlocked },
+                { label: 'Delete bill', icon: Trash2, onClick: remove, danger: true, hidden: !canDelete },
+              ]}
+            />
             {due < -0.004 && notes.length > 0 && (
               <button
                 className="btn btn-primary"

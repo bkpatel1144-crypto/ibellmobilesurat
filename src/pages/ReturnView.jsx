@@ -6,6 +6,9 @@ import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, StatusChip, useConfirm } from '../components/ui';
 import PaymentForm from '../components/PaymentForm';
+import DocActions from '../components/DocActions';
+import MoreMenu from '../components/MoreMenu';
+import { returnMessage } from '../lib/share';
 import { deleteReturn } from '../lib/db';
 import { NOTE_TITLE, KIND_LABEL } from '../lib/returns';
 import { accountName } from '../lib/ledger';
@@ -101,9 +104,22 @@ export default function ReturnView() {
         }
         actions={
           <>
-            <button className="btn" onClick={pdf} disabled={busy}><FileText size={16} /> PDF</button>
+            <DocActions
+              title={n.returnNo}
+              build={async (output) => {
+                const { returnNotePdf } = await import('../lib/export');
+                return returnNotePdf(n, settings, { refunded, output });
+              }}
+              message={returnMessage(n, settings, refunded)}
+              phone={n.partyPhone || data.parties.find((x) => x.id === n.partyId)?.phone}
+            />
             <Link className="btn" to={`/returns/${n.id}/edit`}><Pencil size={16} /> Edit</Link>
-            {canDelete && <button className="btn btn-danger" onClick={remove} aria-label="Delete return"><Trash2 size={16} /></button>}
+            <MoreMenu
+              items={[
+                { label: 'Download PDF', icon: FileText, onClick: pdf, disabled: busy },
+                { label: 'Delete return', icon: Trash2, onClick: remove, danger: true, hidden: !canDelete },
+              ]}
+            />
             {owed > 0.004 && n.partyId && (
               <button className="btn btn-primary" onClick={refundNow}>
                 <Wallet size={16} /> {sale ? 'Refund' : 'Receive refund'}

@@ -6,6 +6,9 @@ import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, Kpi, Segmented, StatusChip, useConfirm } from '../components/ui';
 import { DateRange, ExportButtons, PRESETS } from '../components/Filters';
+import DocActions from '../components/DocActions';
+import MoreMenu from '../components/MoreMenu';
+import { ledgerMessage } from '../lib/share';
 import PartyForm from '../components/PartyForm';
 import PaymentForm from '../components/PaymentForm';
 import { MoneyBars } from '../components/Charts';
@@ -166,8 +169,8 @@ export default function PartyView() {
         }
         actions={
           <>
-            <button className="btn" onClick={() => setEditing(true)} aria-label="Edit party"><Pencil size={16} /></button>
-            {canDelete && <button className="btn btn-danger" onClick={remove} aria-label="Delete party"><Trash2 size={16} /></button>}
+            <button className="btn" onClick={() => setEditing(true)} aria-label="Edit party"><Pencil size={16} /> Edit</button>
+            <MoreMenu items={[{ label: 'Delete party', icon: Trash2, onClick: remove, danger: true, hidden: !canDelete }]} />
             <button className="btn" onClick={() => setPayPreset({ direction: 'out', partyId: party.id, partyName: party.name, amount: bal < 0 ? -bal : '' })}>
               <ArrowUpRight size={16} /> Pay
             </button>
@@ -210,6 +213,16 @@ export default function PartyView() {
               <>
                 <DateRange value={range} onChange={setRange} />
                 <div className="row" style={{ marginLeft: 'auto', gap: 8 }}>
+                  <DocActions
+                    small
+                    title={`Ledger · ${party.name}`}
+                    build={async (output) => {
+                      const { exportTablePdf } = await import('../lib/export');
+                      return exportTablePdf({ ...ledgerSpec(), output });
+                    }}
+                    message={ledgerMessage(party, ledger.closing, `${range.from ? fmtDate(range.from) : 'Beginning'} to ${range.to ? fmtDate(range.to) : 'today'}`, settings)}
+                    phone={party.phone}
+                  />
                   <ExportButtons build={ledgerSpec} small />
                 </div>
               </>

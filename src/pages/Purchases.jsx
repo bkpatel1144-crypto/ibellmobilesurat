@@ -4,7 +4,8 @@ import { Plus, Search, ShoppingBag } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, useConfirm } from '../components/ui';
-import RowActions from '../components/RowActions';
+import { DocRowActions } from '../components/DocActions';
+import { purchaseMessage } from '../lib/share';
 import { useToast } from '../context/ToastContext';
 import { deletePurchase } from '../lib/db';
 import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
@@ -157,7 +158,16 @@ export default function Purchases() {
                         </div>
                       </td>
                       <td className="actions">
-                        <RowActions
+                        <DocRowActions
+                          doc={{
+                            title: `Purchase ${p.purchaseNo}`,
+                            build: async (output) => {
+                              const { purchaseVoucherPdf } = await import('../lib/export');
+                              return purchaseVoucherPdf(p, settings, { output });
+                            },
+                            message: purchaseMessage(p, settings),
+                            phone: data.parties.find((x) => x.id === p.partyId)?.phone,
+                          }}
                           onEdit={() => navigate(`/purchases/${p.id}/edit`)}
                           onDelete={canDelete && !p.items.some((i) => soldIds.has(i.deviceId)) ? () => remove(p) : null}
                           editLabel={`Edit ${p.purchaseNo}`}

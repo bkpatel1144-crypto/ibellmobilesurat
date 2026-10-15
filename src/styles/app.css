@@ -391,11 +391,17 @@ th.num {
   top: 0;
   z-index: 20;
   display: flex;
+  flex-wrap: wrap; /* many actions move to their own row instead of squeezing the title */
   align-items: center;
   gap: var(--space-3);
   min-height: calc(var(--capsule-h) + var(--space-8));
   padding: var(--space-4) 0;
   margin-bottom: var(--space-2);
+}
+
+.topbar > .capsule-group:last-child:not(.menu-btn) {
+  margin-left: auto;
+  max-width: 100%;
 }
 
 .topbar::before {
@@ -418,7 +424,7 @@ th.num {
 }
 
 .topbar-title {
-  flex: 1;
+  flex: 1 1 280px; /* below this the actions wrap, so a bill number is never cut short */
   min-width: 0;
 }
 
@@ -1388,6 +1394,158 @@ table.table {
 .modal.narrow {
   width: min(400px, 100%);
 }
+
+/* ============ Document viewer (PDF preview) ============ */
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* a dark desk in both themes, so white paper reads as paper */
+  background: rgb(18 18 20 / 0.86);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: fade-in var(--dur-short) var(--ease-standard);
+}
+
+.viewer-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: min(880px, calc(100% - 2 * var(--space-3)));
+  margin: var(--space-3) 0;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-5);
+  border-radius: var(--radius-capsule);
+}
+
+.viewer-title {
+  display: grid;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.viewer-title b,
+.viewer-title span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.viewer-title span {
+  font-size: var(--text-xs, 12px);
+  color: var(--color-on-surface-variant);
+}
+
+.viewer-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+}
+
+.viewer-body {
+  flex: 1;
+  width: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--space-3) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.viewer-body::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.35);
+}
+
+.pdf-pages {
+  display: grid;
+  gap: var(--space-4);
+  justify-items: center;
+}
+
+.pdf-page {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  background: #fff;
+  border-radius: 3px;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.35), 0 16px 40px rgb(0 0 0 / 0.35);
+}
+
+.pdf-skeleton {
+  aspect-ratio: 210 / 297;
+  background: rgb(255 255 255 / 0.9);
+}
+
+.viewer-native {
+  width: min(880px, 100%);
+  height: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: #fff;
+}
+
+@media (max-width: 600px) {
+  .viewer-bar {
+    padding-left: var(--space-4);
+  }
+  .viewer-tools .hide-sm {
+    display: none;
+  }
+  .viewer-tools .btn-sm {
+    width: 38px;
+    padding: 0;
+  }
+}
+
+/* ============ More menu (⋯) ============ */
+.more-menu {
+  position: fixed;
+  z-index: 120;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-1);
+  border-radius: var(--radius-section);
+  animation: materialize var(--dur-spring) var(--spring-morph);
+  transform-origin: top right;
+}
+
+.more-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: max(var(--radius-min), calc(var(--radius-section) - var(--space-1)));
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.more-item:hover,
+.more-item:focus-visible {
+  background: var(--hover-overlay);
+  outline: none;
+}
+
+.more-item.danger {
+  color: var(--color-status-urgent);
+}
+
+.more-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 
 .modal-head {
   display: flex;

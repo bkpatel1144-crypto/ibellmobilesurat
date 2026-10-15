@@ -3,7 +3,7 @@ import { IndianRupee, TrendingUp, Receipt, ShoppingBag, ShoppingCart, Percent, B
 import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
 import { Kpi } from '../components/ui';
-import { DateRange, ExportButtons, PRESETS } from '../components/Filters';
+import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
 import { MoneyBars, BarList } from '../components/Charts';
 import { money, num, round2, inRange, monthKey, fmtMonth, fmtDate, fmtDateShort, addDays, today, deviceName } from '../lib/format';
 
@@ -11,7 +11,7 @@ const pct = (a, b) => (b ? `${((a / b) * 100).toFixed(1)}%` : '0.0%');
 
 export default function Analysis() {
   const { sales, purchases, expenses, devices, payments, settings } = useData();
-  const [range, setRange] = useState(PRESETS.month());
+  const [range, setRange] = useState(defaultRange);
 
   const r = useMemo(() => {
     const S = sales.filter((s) => inRange(s.date, range.from, range.to));

@@ -4,7 +4,7 @@ import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, Modal, Field, useConfirm } from '../components/ui';
-import { ExportButtons, DateRange, PRESETS } from '../components/Filters';
+import { ExportButtons, DateRange, PRESETS, defaultRange } from '../components/Filters';
 import TransferForm from '../components/TransferForm';
 import { accountLedger } from '../lib/ledger';
 import { saveBank, deleteBank, saveSettings, CASH_ACCOUNT } from '../lib/db';
@@ -18,7 +18,7 @@ export default function Banks() {
   const [sel, setSel] = useState(CASH_ACCOUNT);
   const [editing, setEditing] = useState(null);
   const [transfer, setTransfer] = useState(false);
-  const [range, setRange] = useState(PRESETS.month());
+  const [range, setRange] = useState(defaultRange);
 
   const ledgers = useMemo(() => new Map(accounts.map((a) => [a.id, accountLedger(a, data)])), [accounts, data]);
   const total = [...ledgers.values()].reduce((s, l) => s + l.closing, 0);

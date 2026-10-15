@@ -4,7 +4,7 @@ import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, Kpi, Modal, Field, useConfirm } from '../components/ui';
-import { DateRange, ExportButtons, PRESETS } from '../components/Filters';
+import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
 import { BarList } from '../components/Charts';
 import PaymentFields from '../components/PaymentFields';
 import { saveExpense, deleteExpense, CASH_ACCOUNT } from '../lib/db';
@@ -15,7 +15,7 @@ export default function Expenses() {
   const { expenses, accounts, settings } = useData();
   const toast = useToast();
   const [confirmDialog, confirm] = useConfirm();
-  const [range, setRange] = useState(PRESETS.month());
+  const [range, setRange] = useState(defaultRange);
   const [cat, setCat] = useState('all');
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState(null);

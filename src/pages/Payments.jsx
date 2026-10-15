@@ -5,7 +5,7 @@ import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, Segmented, Kpi, useConfirm } from '../components/ui';
-import { DateRange, ExportButtons, PRESETS } from '../components/Filters';
+import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
 import PaymentForm from '../components/PaymentForm';
 import TransferForm from '../components/TransferForm';
 import { deletePayment } from '../lib/db';
@@ -18,7 +18,7 @@ export default function Payments() {
   const { payments, accounts, settings } = useData();
   const toast = useToast();
   const [confirmDialog, confirm] = useConfirm();
-  const [range, setRange] = useState(PRESETS.month());
+  const [range, setRange] = useState(defaultRange);
   const [dir, setDir] = useState('all');
   const [acc, setAcc] = useState('all');
   const [q, setQ] = useState('');

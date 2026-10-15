@@ -27,10 +27,18 @@ export const toISODate = (d) => {
   return new Date(x.getTime() - off * 60000).toISOString().slice(0, 10);
 };
 
+// date style chosen in Settings → Tables & Lists (set by prefs.js)
+let dateStyle = 'medium';
+export const setDateFormat = (s) => {
+  dateStyle = s || 'medium';
+};
+
 export const fmtDate = (iso) => {
   if (!iso) return '—';
   const d = new Date(`${iso}T00:00:00`);
   if (Number.isNaN(d.getTime())) return iso;
+  if (dateStyle === 'iso') return iso.slice(0, 10);
+  if (dateStyle === 'dmy') return d.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 

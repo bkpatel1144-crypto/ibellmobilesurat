@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { FileText, FileSpreadsheet } from 'lucide-react';
 import { today, startOfMonth, startOfFY, addDays } from '../lib/format';
 import { useToast } from '../context/ToastContext';
+import { getPref } from '../lib/prefs';
 
 export const PRESETS = {
   today: () => ({ from: today(), to: today() }),
@@ -10,6 +11,9 @@ export const PRESETS = {
   fy: () => ({ from: startOfFY(), to: today() }),
   all: () => ({ from: '', to: '' }),
 };
+
+/** Starting range for lists, from Settings → Tables & Lists. */
+export const defaultRange = () => (PRESETS[getPref('defaultRange')] || PRESETS.month)();
 
 export function DateRange({ value, onChange }) {
   const preset = Object.keys(PRESETS).find((k) => {

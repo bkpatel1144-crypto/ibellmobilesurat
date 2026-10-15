@@ -4,13 +4,13 @@ import { Plus, Search, ShoppingCart, EyeOff } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, Segmented } from '../components/ui';
-import { DateRange, ExportButtons, PRESETS } from '../components/Filters';
+import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
 import { money, num, fmtDate, inRange, byDateDesc, round2 } from '../lib/format';
 
 export default function Sales() {
   const { sales, settings, privacy } = useData();
   const navigate = useNavigate();
-  const [range, setRange] = useState(PRESETS.month());
+  const [range, setRange] = useState(defaultRange);
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('all');
 

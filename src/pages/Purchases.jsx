@@ -4,13 +4,13 @@ import { Plus, Search, ShoppingBag } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
 import { Empty } from '../components/ui';
-import { DateRange, ExportButtons, PRESETS } from '../components/Filters';
+import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
 import { money, num, fmtDate, inRange, byDateDesc, round2 } from '../lib/format';
 
 export default function Purchases() {
   const { purchases, settings } = useData();
   const navigate = useNavigate();
-  const [range, setRange] = useState(PRESETS.month());
+  const [range, setRange] = useState(defaultRange);
   const [q, setQ] = useState('');
 
   const rows = useMemo(() => {

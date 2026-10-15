@@ -1,5 +1,6 @@
 ﻿import { createContext, Suspense, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { usePrefs } from '../context/PrefsContext';
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -67,6 +68,8 @@ export default function Layout() {
   const { settings, privacy, ready, error } = useData();
   const toast = useToast();
   const location = useLocation();
+  const navigate = useNavigate();
+  const { prefs } = usePrefs();
   const [menuOpen, setMenuOpen] = useState(false);
   const [passOpen, setPassOpen] = useState(false);
   const navRef = useRef();
@@ -75,11 +78,25 @@ export default function Layout() {
 
   useEffect(() => setMenuOpen(false), [location.pathname]);
 
-  // selection pill follows the active nav item
+  // selection pill follows the active nav item - re-measured when the sidebar's size changes
   useLayoutEffect(() => {
-    const el = navRef.current?.querySelector('[aria-current="page"]');
-    setPill(el ? { y: el.offsetTop, h: el.offsetHeight } : null);
-  }, [location.pathname]);
+    const measure = () => {
+      const el = navRef.current?.querySelector('[aria-current="page"]');
+      setPill(el ? { y: el.offsetTop, h: el.offsetHeight } : null);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (navRef.current) ro.observe(navRef.current);
+    return () => ro.disconnect();
+  }, [location.pathname, prefs.sidebarWidth, prefs.sidebarLabels, prefs.textSize, prefs.font]);
+
+  // start page after sign-in (Settings → Tables & Lists)
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current || !ready) return;
+    started.current = true;
+    if (location.pathname === '/' && prefs.startPage && prefs.startPage !== '/') navigate(prefs.startPage, { replace: true });
+  }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps -- only once, on the first load
 
   // 5 quick taps on the logo open the passkey dialog (or lock again if already open)
   const onLogoTap = () => {
@@ -104,7 +121,7 @@ export default function Layout() {
             <span className="brand-logo">
               {settings.logo ? <img src={settings.logo} alt="" /> : <Smartphone size={22} />}
             </span>
-            <span style={{ minWidth: 0 }}>
+            <span className="brand-text" style={{ minWidth: 0 }}>
               <span className="brand-name" style={{ display: 'block' }}>{settings.shopName}</span>
               <span className="brand-sub">{settings.tagline}</span>
             </span>
@@ -118,9 +135,9 @@ export default function Layout() {
               <div className="nav-group" key={group.label} role="group" aria-label={group.label}>
                 <div className="nav-label" aria-hidden="true">{group.label}</div>
                 {group.items.map(({ to, label, icon: Icon, end }) => (
-                  <NavLink key={to} to={to} end={end} className="nav-item">
+                  <NavLink key={to} to={to} end={end} className="nav-item" title={prefs.sidebarWidth === 'icons' ? label : undefined}>
                     <Icon size={18} />
-                    {label}
+                    <span className="nav-text">{label}</span>
                   </NavLink>
                 ))}
               </div>

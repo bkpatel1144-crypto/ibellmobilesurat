@@ -4,6 +4,7 @@ import { isConfigured } from './firebase';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { DataProvider } from './context/DataContext';
 import { ToastProvider } from './context/ToastContext';
+import { PrefsProvider } from './context/PrefsContext';
 import Layout from './components/Layout';
 import { SkeletonPage } from './components/ui';
 import Login from './pages/Login';
@@ -77,7 +78,9 @@ export default function App() {
     <BrowserRouter>
       <ToastProvider>
         <AuthProvider>
-          <Gate />
+          <PrefsProvider>
+            <Gate />
+          </PrefsProvider>
         </AuthProvider>
       </ToastProvider>
     </BrowserRouter>

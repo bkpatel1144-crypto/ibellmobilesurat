@@ -23,6 +23,8 @@
   --color-on-primary-container: #0a0a0a;
   --color-error: #b3261e;
   --color-on-error: #ffffff;
+  /* filled primary surfaces (buttons, selected pill, highlight tiles); a gradient with a 2-colour combo */
+  --primary-fill: var(--color-primary);
 
   --color-status-success: #1e6b3a;
   --color-status-success-wash: #e3f1e8;
@@ -57,6 +59,10 @@
     radial-gradient(900px 600px at 100% 100%, var(--ambient-1), transparent 60%);
   --scrollbar-thumb: rgba(0, 0, 0, 0.35);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.7);
+  /* animated backgrounds (Settings → Appearance) */
+  --aurora-a: rgba(0, 0, 0, 0.1);
+  --aurora-b: rgba(0, 0, 0, 0.06);
+  --pattern-ink: rgba(0, 0, 0, 0.11);
   --scrollbar-track: transparent;
   --scrollbar-size: 1px;
 
@@ -158,6 +164,9 @@
     --pressed-overlay: rgba(255, 255, 255, 0.08);
     --scrollbar-thumb: rgba(255, 255, 255, 0.35);
     --scrollbar-thumb-hover: rgba(255, 255, 255, 0.75);
+    --aurora-a: rgba(255, 255, 255, 0.09);
+    --aurora-b: rgba(255, 255, 255, 0.05);
+    --pattern-ink: rgba(255, 255, 255, 0.1);
   }
 }
 
@@ -205,6 +214,9 @@
   --pressed-overlay: rgba(255, 255, 255, 0.08);
   --scrollbar-thumb: rgba(255, 255, 255, 0.35);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.75);
+  --aurora-a: rgba(255, 255, 255, 0.09);
+  --aurora-b: rgba(255, 255, 255, 0.05);
+  --pattern-ink: rgba(255, 255, 255, 0.1);
 }
 
 /* ---------- Increase contrast (§8) ---------- */

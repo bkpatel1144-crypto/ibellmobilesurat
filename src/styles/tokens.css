@@ -1,0 +1,238 @@
+/* IBELL MOBILE design tokens - the only place raw values live (DESIGN.md §10.1).
+   Monochrome black & white palette; status hues are for content only. */
+
+:root {
+  /* native controls (select popups, date pickers, datalists) follow the theme */
+  color-scheme: light;
+
+  /* ---------- Colour roles: light ---------- */
+  --color-bg: #ededed;
+  --color-surface: #ffffff;
+  --color-surface-container-low: #f6f6f6;
+  --color-surface-container: #f0f0f0;
+  --color-surface-container-high: #ffffff;
+  --color-surface-container-highest: #e6e6e6;
+  --color-on-surface: #0a0a0a;
+  --color-on-surface-variant: #555555;
+  --color-on-surface-muted: #767676;
+  --color-outline: #8c8c8c;
+  --color-outline-variant: #e0e0e0;
+  --color-primary: #0a0a0a;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #e4e4e4;
+  --color-on-primary-container: #0a0a0a;
+  --color-error: #b3261e;
+  --color-on-error: #ffffff;
+
+  --color-status-success: #1e6b3a;
+  --color-status-success-wash: #e3f1e8;
+  --color-status-urgent: #b3261e;
+  --color-status-urgent-wash: #f8e4e2;
+  --color-status-caution: #7a5200;
+  --color-status-caution-wash: #f6ecd7;
+  --color-status-info: #333333;
+  --color-status-info-wash: #ececec;
+
+  /* Glass recipe (§4.1) */
+  --glass-fill-small: rgba(255, 255, 255, 0.62);
+  --glass-fill-large: rgba(255, 255, 255, 0.82);
+  --glass-fill-small-b: rgba(255, 255, 255, 0.9);
+  --glass-fill-large-b: rgba(255, 255, 255, 0.97);
+  --glass-rim: rgba(255, 255, 255, 0.85);
+  --glass-rim-end: rgba(255, 255, 255, 0);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-shadow-small: 0 6px 18px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.06);
+  --glass-shadow-large: 0 16px 48px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
+  --glass-blur-small: 24px;
+  --glass-blur-large: 32px;
+  --scrim: rgba(0, 0, 0, 0.45);
+  --ambient-1: rgba(0, 0, 0, 0.05);
+  --ambient-2: rgba(255, 255, 255, 0.9);
+  --press-glow: rgba(255, 255, 255, 0.18);
+  --hover-overlay: rgba(0, 0, 0, 0.04);
+  --pressed-overlay: rgba(0, 0, 0, 0.06);
+  /* app background wash - shared by <body> and the page header's scroll edge */
+  --app-ambient:
+    radial-gradient(1200px 700px at 0% 0%, var(--ambient-1), transparent 60%),
+    radial-gradient(900px 600px at 100% 100%, var(--ambient-1), transparent 60%);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.35);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.7);
+  --scrollbar-track: transparent;
+  --scrollbar-size: 1px;
+
+  /* ---------- Shape (§4.2) ---------- */
+  --radius-panel: 28px;
+  --radius-card: 24px;
+  --radius-section: 20px;
+  --radius-dialog: 32px;
+  --radius-control: 14px;
+  --radius-min: 8px;
+  --radius-capsule: 999px;
+
+  /* ---------- Spacing scale (§4.4) ---------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  /* ---------- Type (Productivity profile) ---------- */
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 26px;
+  --text-3xl: 32px;
+
+  /* ---------- Sizes ---------- */
+  --sidebar-w: 256px;
+  --capsule-h: 52px;
+  --control-h: 44px;
+  --target-pointer: 32px;
+  --gutter: 16px;
+
+  /* ---------- Motion (§5.2, Productivity profile ×0.8) ---------- */
+  --dur-micro: 100ms;
+  --dur-short: 160ms;
+  --dur-medium: 240ms;
+  --dur-long: 300ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --ease-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  /* spring curves approximated with linear() (release damping 0.7 for productivity) */
+  --spring-select: linear(0, 0.2 6%, 0.63 16%, 0.95 28%, 1.06 38%, 1.04 48%, 1 64%, 1);
+  --spring-morph: linear(0, 0.22 7%, 0.7 19%, 0.98 32%, 1.03 44%, 1.01 58%, 1);
+  --spring-release: linear(0, 0.3 8%, 0.85 22%, 1.07 36%, 1.02 52%, 1);
+  --dur-spring: 420ms;
+  --offset-enter: 12px;
+}
+
+/* ---------- Dark ---------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --color-bg: #000000;
+    --color-surface: #0b0b0b;
+    --color-surface-container-low: #0f0f0f;
+    --color-surface-container: #161616;
+    --color-surface-container-high: #121212;
+    --color-surface-container-highest: #232323;
+    --color-on-surface: #f5f5f5;
+    --color-on-surface-variant: #a8a8a8;
+    --color-on-surface-muted: #8a8a8a;
+    --color-outline: #6b6b6b;
+    --color-outline-variant: #262626;
+    --color-primary: #fafafa;
+    --color-on-primary: #0a0a0a;
+    --color-primary-container: #2a2a2a;
+    --color-on-primary-container: #fafafa;
+    --color-error: #f2b8b5;
+    --color-on-error: #601410;
+    --color-status-success: #8fd3a5;
+    --color-status-success-wash: #10261a;
+    --color-status-urgent: #f2b8b5;
+    --color-status-urgent-wash: #2d1211;
+    --color-status-caution: #e8c37a;
+    --color-status-caution-wash: #2a2010;
+    --color-status-info: #d6d6d6;
+    --color-status-info-wash: #1f1f1f;
+    --glass-fill-small: rgba(22, 22, 22, 0.62);
+    --glass-fill-large: rgba(18, 18, 18, 0.84);
+    --glass-fill-small-b: rgba(24, 24, 24, 0.92);
+    --glass-fill-large-b: rgba(20, 20, 20, 0.98);
+    --glass-rim: rgba(255, 255, 255, 0.14);
+    --glass-rim-end: rgba(255, 255, 255, 0);
+    --glass-border: rgba(255, 255, 255, 0.07);
+    --glass-shadow-small: 0 6px 18px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.4);
+    --glass-shadow-large: 0 16px 48px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+    --scrim: rgba(0, 0, 0, 0.6);
+    --ambient-1: rgba(255, 255, 255, 0.05);
+    --ambient-2: rgba(0, 0, 0, 0.9);
+    --press-glow: rgba(255, 255, 255, 0.1);
+    --hover-overlay: rgba(255, 255, 255, 0.05);
+    --pressed-overlay: rgba(255, 255, 255, 0.08);
+    --scrollbar-thumb: rgba(255, 255, 255, 0.35);
+    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.75);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --color-bg: #000000;
+  --color-surface: #0b0b0b;
+  --color-surface-container-low: #0f0f0f;
+  --color-surface-container: #161616;
+  --color-surface-container-high: #121212;
+  --color-surface-container-highest: #232323;
+  --color-on-surface: #f5f5f5;
+  --color-on-surface-variant: #a8a8a8;
+  --color-on-surface-muted: #8a8a8a;
+  --color-outline: #6b6b6b;
+  --color-outline-variant: #262626;
+  --color-primary: #fafafa;
+  --color-on-primary: #0a0a0a;
+  --color-primary-container: #2a2a2a;
+  --color-on-primary-container: #fafafa;
+  --color-error: #f2b8b5;
+  --color-on-error: #601410;
+  --color-status-success: #8fd3a5;
+  --color-status-success-wash: #10261a;
+  --color-status-urgent: #f2b8b5;
+  --color-status-urgent-wash: #2d1211;
+  --color-status-caution: #e8c37a;
+  --color-status-caution-wash: #2a2010;
+  --color-status-info: #d6d6d6;
+  --color-status-info-wash: #1f1f1f;
+  --glass-fill-small: rgba(22, 22, 22, 0.62);
+  --glass-fill-large: rgba(18, 18, 18, 0.84);
+  --glass-fill-small-b: rgba(24, 24, 24, 0.92);
+  --glass-fill-large-b: rgba(20, 20, 20, 0.98);
+  --glass-rim: rgba(255, 255, 255, 0.14);
+  --glass-rim-end: rgba(255, 255, 255, 0);
+  --glass-border: rgba(255, 255, 255, 0.07);
+  --glass-shadow-small: 0 6px 18px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --glass-shadow-large: 0 16px 48px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --scrim: rgba(0, 0, 0, 0.6);
+  --ambient-1: rgba(255, 255, 255, 0.05);
+  --ambient-2: rgba(0, 0, 0, 0.9);
+  --press-glow: rgba(255, 255, 255, 0.1);
+  --hover-overlay: rgba(255, 255, 255, 0.05);
+  --pressed-overlay: rgba(255, 255, 255, 0.08);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.35);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.75);
+}
+
+/* ---------- Increase contrast (§8) ---------- */
+@media (prefers-contrast: more) {
+  :root {
+    --color-on-surface-variant: #2b2b2b;
+    --color-on-surface-muted: #3d3d3d;
+    --color-outline-variant: #0a0a0a;
+    --glass-fill-small: var(--color-surface);
+    --glass-fill-large: var(--color-surface);
+    --glass-fill-small-b: var(--color-surface);
+    --glass-fill-large-b: var(--color-surface);
+    --glass-border: var(--color-on-surface);
+  }
+  :root[data-theme='dark'] {
+    --color-on-surface-variant: #e0e0e0;
+    --color-on-surface-muted: #cfcfcf;
+    --color-outline-variant: #f5f5f5;
+  }
+}
+
+/* ---------- Reduce motion (§5.4) ---------- */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --spring-select: ease-out;
+    --spring-morph: ease-out;
+    --spring-release: ease-out;
+    --dur-spring: 160ms;
+    --offset-enter: 0px;
+  }
+}

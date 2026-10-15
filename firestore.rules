@@ -1,0 +1,23 @@
+rules_version = '2';
+
+// IBELL MOBILE - Firestore security rules
+//
+// Only the staff e-mails listed below can read or write shop data.
+// Create these users in Firebase console -> Authentication -> Users -> Add user,
+// then put the same e-mails here and deploy:  firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isStaff() {
+      return request.auth != null
+        && request.auth.token.email in [
+          'owner@ibellmobile.com'
+          // , 'staff@ibellmobile.com'
+        ];
+    }
+
+    match /{document=**} {
+      allow read, write: if isStaff();
+    }
+  }
+}

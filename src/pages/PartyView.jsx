@@ -127,7 +127,7 @@ export default function PartyView() {
         subtitle={TYPE_LABEL[party.type] || party.type}
         back={
           <div className="capsule-group glass">
-            <button className="btn btn-icon" onClick={() => navigate(-1)} aria-label="Back"><ArrowLeft size={18} /></button>
+            <button type="button" className="btn btn-icon" onClick={() => navigate(-1)} aria-label="Back"><ArrowLeft size={18} /></button>
           </div>
         }
         actions={

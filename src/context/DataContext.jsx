@@ -1,12 +1,13 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { round2, num } from '../lib/format';
 import { sha256 } from '../lib/files';
-import { savePasskeyHash } from '../lib/db';
+import { savePasskeyHash, deleteAudit } from '../lib/db';
 import { accountList } from '../lib/ledger';
+import { isExpired } from '../lib/audit';
 
-const COLLECTIONS = ['parties', 'devices', 'purchases', 'sales', 'repairs', 'payments', 'expenses', 'banks'];
+const COLLECTIONS = ['parties', 'devices', 'purchases', 'sales', 'repairs', 'payments', 'expenses', 'banks', 'audits'];
 
 export const DEFAULT_SETTINGS = {
   shopName: 'IBELL MOBILE',
@@ -25,6 +26,12 @@ export const DEFAULT_SETTINGS = {
     '1. Goods once sold will not be taken back.\n2. Warranty as per manufacturer / shop policy.\n3. Used devices are sold in as-is condition after inspection by the customer.',
   invoiceFooter: 'Thank you for shopping with us!',
   cashOpening: 0,
+  snPrefix: 'G-',
+  snNext: 1,
+  labelWidth: 50,
+  labelHeight: 25,
+  labelShowBattery: true,
+  autoPrintLabels: false,
 };
 
 const DataContext = createContext(null);
@@ -62,7 +69,28 @@ export function DataProvider({ children }) {
 
   const settings = useMemo(() => ({ ...DEFAULT_SETTINGS, ...(settingsDoc || {}) }), [settingsDoc]);
 
-  const data = useMemo(() => withSettlement(unlocked ? raw : applyPrivacy(raw)), [raw, unlocked]);
+  // Stock audits are kept 15 days: expired ones vanish at once and are deleted from Firestore
+  // by whichever signed-in device sees them first (checked again every hour while open).
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setClock(Date.now()), 3600000);
+    return () => clearInterval(t);
+  }, []);
+  const purging = useRef(new Set());
+  useEffect(() => {
+    const now = Date.now();
+    for (const a of raw.audits) {
+      if (isExpired(a, now) && !purging.current.has(a.id)) {
+        purging.current.add(a.id);
+        deleteAudit(a.id).catch(() => purging.current.delete(a.id));
+      }
+    }
+  }, [raw.audits, clock]);
+
+  const data = useMemo(() => {
+    const d = withSettlement(unlocked ? raw : applyPrivacy(raw));
+    return { ...d, audits: raw.audits.filter((a) => !isExpired(a, clock)) };
+  }, [raw, unlocked, clock]);
 
   const accounts = useMemo(() => accountList(data.banks, settings), [data.banks, settings]);
 

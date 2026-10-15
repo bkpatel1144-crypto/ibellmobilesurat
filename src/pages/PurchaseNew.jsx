@@ -22,6 +22,7 @@ const blankItem = () => ({
   model: '',
   variant: '',
   color: '',
+  battery: '',
   condition: 'Used',
   price: '',
   notes: '',
@@ -88,8 +89,12 @@ export default function PurchaseNew() {
     if (errs.length) return;
     setBusy(true);
     try {
-      const { id, purchaseNo } = await createPurchase(f, { settings, purchases });
+      const { id, purchaseNo, devices: saved } = await createPurchase(f, { settings, purchases, devices: data.raw.devices });
       toast(`Purchase ${purchaseNo} saved`);
+      if (settings.autoPrintLabels) {
+        const { printLabels } = await import('../lib/labels');
+        printLabels(saved, settings).catch((err) => toast(err.message, 'error'));
+      }
       navigate(`/purchases/${id}`);
     } catch (err) {
       toast(err.message, 'error');
@@ -148,6 +153,9 @@ export default function PurchaseNew() {
                   <div className="row" style={{ gap: 10 }}>
                     <span className="line-index">{i + 1}</span>
                     <b>{[it.brand, it.model].filter(Boolean).join(' ') || 'Device'}</b>
+                    <span className="chip plain mono" title="SN is given automatically when you save">
+                      SN {settings.snPrefix}{(Math.floor(Number(settings.snNext)) || 1) + i}
+                    </span>
                   </div>
                   <div className="row" style={{ gap: 4 }}>
                     <button
@@ -196,6 +204,9 @@ export default function PurchaseNew() {
                   </Field>
                   <Field label="Colour">
                     <input className="input" value={it.color} onChange={(e) => setItem(i, { color: e.target.value })} />
+                  </Field>
+                  <Field label="Battery health (%)">
+                    <input className="input num" type="number" min="0" max="100" placeholder="e.g. 95" value={it.battery} onChange={(e) => setItem(i, { battery: e.target.value })} />
                   </Field>
                   <Field label="Condition">
                     <Segmented

@@ -172,9 +172,9 @@ export function StatusChip({ status }) {
   return <span className={`chip ${cls}`}>{label}</span>;
 }
 
-export function Field({ label, required, children, hint, style }) {
+export function Field({ label, required, children, hint, style, className = '' }) {
   return (
-    <label className="field" style={style}>
+    <label className={`field ${className}`} style={style}>
       <span>
         {label}
         {required && <span className="req"> *</span>}

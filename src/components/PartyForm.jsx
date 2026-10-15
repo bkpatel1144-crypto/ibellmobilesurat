@@ -5,7 +5,7 @@ import { useToast } from '../context/ToastContext';
 
 const blank = { name: '', phone: '', email: '', address: '', gstin: '', type: 'both', openingBalance: '', obSide: 'receive', notes: '' };
 
-export default function PartyForm({ open, onClose, party, defaultType = 'both' }) {
+export default function PartyForm({ open, onClose, party, defaultType = 'both', initialName = '' }) {
   const toast = useToast();
   const [f, setF] = useState(blank);
   const [busy, setBusy] = useState(false);
@@ -17,8 +17,8 @@ export default function PartyForm({ open, onClose, party, defaultType = 'both' }
     if (party) {
       const ob = Number(party.openingBalance) || 0;
       setF({ ...blank, ...party, openingBalance: ob ? Math.abs(ob) : '', obSide: ob < 0 ? 'pay' : 'receive' });
-    } else setF({ ...blank, type: defaultType });
-  }, [open, party, defaultType]);
+    } else setF({ ...blank, type: defaultType, name: initialName });
+  }, [open, party, defaultType]); // eslint-disable-line react-hooks/exhaustive-deps -- name is only a starting value
 
   const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target ? e.target.value : e }));
 

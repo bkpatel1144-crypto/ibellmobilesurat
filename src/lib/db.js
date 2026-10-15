@@ -8,9 +8,12 @@ import {
   runTransaction,
   serverTimestamp,
   increment,
+  arrayUnion,
+  arrayRemove,
+  Timestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { num, round2, cleanImei } from './format';
+import { num, round2, cleanImei, deviceName, today } from './format';
 
 export const CASH_ACCOUNT = 'cash';
 
@@ -39,7 +42,43 @@ async function nextNumber(kind, prefix, existing = []) {
   return `${prefix}${String(n).padStart(4, '0')}`;
 }
 
-function maxNumber(list, prefix) {
+/** Reserves `count` device SNs (e.g. G-523, G-524…). The next number lives in
+ *  settings/shop.snNext so the owner can change it from Settings. */
+export async function allocateSerials(count, settings, devices = []) {
+  if (!count) return [];
+  const prefix = settings?.snPrefix ?? 'G-';
+  const localMax = maxNumber(devices.map((d) => d.sn), prefix);
+  const ref = doc(db, 'settings', 'shop');
+  let start;
+  try {
+    start = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const next = Math.max(num(snap.exists() ? snap.data().snNext : 0) || 1, localMax + 1);
+      tx.set(ref, { snNext: next + count }, { merge: true });
+      return next;
+    });
+  } catch {
+    start = Math.max(num(settings?.snNext) || 1, localMax + 1);
+  }
+  return Array.from({ length: count }, (_, i) => `${prefix}${start + i}`);
+}
+
+/** Gives an SN to devices bought before SNs existed; returns the devices with their SN. */
+export async function ensureSerials(list, settings, allDevices) {
+  const missing = list.filter((d) => !d.sn);
+  if (!missing.length) return list;
+  const sns = await allocateSerials(missing.length, settings, allDevices);
+  const batch = writeBatch(db);
+  const given = new Map();
+  missing.forEach((d, i) => {
+    given.set(d.id, sns[i]);
+    batch.update(doc(db, 'devices', d.id), { sn: sns[i], updatedAt: serverTimestamp() });
+  });
+  await batch.commit();
+  return list.map((d) => (given.has(d.id) ? { ...d, sn: given.get(d.id) } : d));
+}
+
+export function maxNumber(list, prefix) {
   let max = 0;
   for (const no of list) {
     if (typeof no === 'string' && no.startsWith(prefix)) {
@@ -92,9 +131,11 @@ function paymentDoc({ direction, amount, date, mode, accountId, partyId, partyNa
 
 /* ------------------------------------------------------------------ purchases */
 
-export async function createPurchase(form, { settings, purchases }) {
+export async function createPurchase(form, { settings, purchases, devices = [] }) {
   const prefix = settings?.purchasePrefix || 'PUR-';
   const purchaseNo = await nextNumber('purchase', prefix, purchases.map((p) => p.purchaseNo));
+  const sns = await allocateSerials(form.items.length, settings, devices);
+  const saved = [];
 
   // upload ID proofs first (each is its own document, too big for one batch)
   const items = [];
@@ -107,10 +148,12 @@ export async function createPurchase(form, { settings, purchases }) {
   const pRef = newRef('purchases');
   const lines = [];
 
-  for (const it of items) {
+  for (const [i, it] of items.entries()) {
     const dRef = newRef('devices');
     const sendRepair = Boolean(it.repair?.send);
     const device = {
+      sn: sns[i],
+      battery: it.battery === '' || it.battery == null ? null : Math.min(100, Math.max(0, Math.round(num(it.battery)))),
       imei: cleanImei(it.imei),
       imei2: cleanImei(it.imei2),
       brand: it.brand.trim(),
@@ -134,8 +177,11 @@ export async function createPurchase(form, { settings, purchases }) {
       ...stamp(),
     };
     batch.set(dRef, device);
+    saved.push({ id: dRef.id, ...device });
     lines.push({
       deviceId: dRef.id,
+      sn: device.sn,
+      battery: device.battery,
       imei: device.imei,
       imei2: device.imei2,
       brand: device.brand,
@@ -209,7 +255,7 @@ export async function createPurchase(form, { settings, purchases }) {
   }
 
   await batch.commit();
-  return { id: pRef.id, purchaseNo };
+  return { id: pRef.id, purchaseNo, devices: saved };
 }
 
 export async function deletePurchase(purchase, { devices, repairs, payments }) {
@@ -250,6 +296,8 @@ export async function createSale(form, { settings, sales, devices }) {
     const buyerIdProofs = await saveAttachments(it.idFiles);
     items.push({
       deviceId: d.id,
+      sn: d.sn || '',
+      battery: d.battery ?? null,
       imei: d.imei,
       imei2: d.imei2 || '',
       brand: d.brand,
@@ -544,6 +592,66 @@ export async function saveExpense(e) {
 }
 
 export const deleteExpense = (id) => deleteDoc(doc(db, 'expenses', id));
+
+/* ------------------------------------------------------------------ stock audits */
+
+/** Audits are kept for this many days, then deleted automatically. */
+export const AUDIT_KEEP_DAYS = 15;
+const auditExpiry = () => Timestamp.fromMillis(Date.now() + AUDIT_KEEP_DAYS * 86400000);
+
+/** Starts an audit with a snapshot of everything that should be on the shelf right now. */
+export async function startAudit({ devices, by, note }) {
+  const expected = devices
+    .filter((d) => d.status === 'in_stock')
+    .map((d) => ({
+      deviceId: d.id,
+      sn: d.sn || '',
+      imei: d.imei,
+      imei2: d.imei2 || '',
+      name: deviceName(d),
+      color: d.color || '',
+      condition: d.condition || '',
+    }));
+  const ref = newRef('audits');
+  await setDoc(ref, {
+    status: 'in_progress',
+    date: today(),
+    startedBy: by || '',
+    note: (note || '').trim(),
+    expected,
+    scans: [],
+    expireAt: auditExpiry(), // also usable by a Firestore TTL policy on this field
+    ...stamp(),
+  });
+  return ref.id;
+}
+
+/** scan = { code, at (ms), by, manual? } */
+export const addAuditScan = (id, scan) =>
+  updateDoc(doc(db, 'audits', id), { scans: arrayUnion(scan), updatedAt: serverTimestamp() });
+
+export const removeAuditScans = (id, scans) =>
+  updateDoc(doc(db, 'audits', id), { scans: arrayRemove(...scans), updatedAt: serverTimestamp() });
+
+/** Freezes the result so the report never changes after completion; the 15 days restart from now. */
+export const completeAudit = (id, result, by) =>
+  updateDoc(doc(db, 'audits', id), {
+    status: 'completed',
+    result,
+    summary: {
+      expected: result.found.length + result.missing.length + result.soldDuring.length,
+      found: result.found.length,
+      missing: result.missing.length,
+      soldDuring: result.soldDuring.length,
+      extra: result.extras.length,
+    },
+    completedBy: by || '',
+    completedAt: serverTimestamp(),
+    expireAt: auditExpiry(),
+    updatedAt: serverTimestamp(),
+  });
+
+export const deleteAudit = (id) => deleteDoc(doc(db, 'audits', id));
 
 /* ------------------------------------------------------------------ settings */
 

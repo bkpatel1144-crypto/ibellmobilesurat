@@ -7,17 +7,21 @@ import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
 import { Field, Segmented } from '../components/ui';
 import PasskeyModal from '../components/PasskeyModal';
-import { saveSettings } from '../lib/db';
+import LabelPreview from '../components/LabelPreview';
+import { saveSettings, maxNumber } from '../lib/db';
 import { fileToLogo } from '../lib/files';
 import { getTheme, setTheme } from '../lib/theme';
 
 const FIELDS = [
   'shopName', 'tagline', 'address', 'phone', 'email', 'gstin', 'logo',
   'invoicePrefix', 'cashInvoicePrefix', 'purchasePrefix', 'defaultTax', 'defaultWarranty', 'invoiceTerms', 'invoiceFooter',
+  'snPrefix', 'snNext', 'labelWidth', 'labelHeight', 'labelShowBattery', 'autoPrintLabels',
 ];
 
+const SAMPLE_DEVICE = { brand: 'Apple', model: 'iPhone 15 Pro', variant: '256', color: 'White', imei: '355262965973925', battery: 95 };
+
 export default function Settings() {
-  const { settings, privacy } = useData();
+  const { settings, privacy, raw } = useData();
   const { user } = useAuth();
   const toast = useToast();
   const [f, setF] = useState(() => pick(settings));
@@ -33,17 +37,41 @@ export default function Settings() {
     if (!dirty.current) setF(pick(settings));
   }, [settings]);
 
+  const touched = useRef(new Set());
   const set = (k) => (e) => {
     dirty.current = true;
+    touched.current.add(k);
     setF((p) => ({ ...p, [k]: e.target.value }));
   };
+
+  const setBool = (k) => (e) => {
+    dirty.current = true;
+    setF((p) => ({ ...p, [k]: e.target.checked }));
+  };
+
+  // highest SN already given with the prefix being typed - the next number must be above it
+  const snUsed = maxNumber(raw.devices.map((d) => d.sn), f.snPrefix || '');
 
   const save = async (e) => {
     e.preventDefault();
     if (!f.shopName.trim()) return toast('Shop name is required', 'error');
+    const snChanged = touched.current.has('snNext') || touched.current.has('snPrefix');
+    const snNext = Math.floor(Number(f.snNext)) || 1;
+    if (snChanged && snNext <= snUsed) return toast(`Next SN must be more than ${f.snPrefix}${snUsed} (already used)`, 'error');
     setBusy(true);
     try {
-      await saveSettings({ ...f, defaultTax: Number(f.defaultTax) || 0 });
+      const data = {
+        ...f,
+        defaultTax: Number(f.defaultTax) || 0,
+        snPrefix: (f.snPrefix || '').trim(),
+        snNext,
+        labelWidth: Number(f.labelWidth) || 50,
+        labelHeight: Number(f.labelHeight) || 25,
+      };
+      // the SN counter moves on every purchase - only write it when it was edited here
+      if (!snChanged) delete data.snNext;
+      await saveSettings(data);
+      touched.current.clear();
       dirty.current = false;
       toast('Settings saved');
     } catch (err) {
@@ -140,6 +168,46 @@ export default function Settings() {
             <Field label="Bill footer line" style={{ marginTop: 12 }}>
               <input className="input" value={f.invoiceFooter} onChange={set('invoiceFooter')} />
             </Field>
+          </section>
+
+          <section className="card card-lg">
+            <div className="card-head">
+              <div>
+                <h2>Device SN & barcode labels</h2>
+                <p className="muted small" style={{ margin: 0 }}>Every device you buy gets the next SN automatically</p>
+              </div>
+            </div>
+            <div className="grid grid-2" style={{ alignItems: 'start' }}>
+              <div className="stack">
+                <div className="form-grid">
+                  <Field label="SN prefix" hint="e.g. G- → G-523">
+                    <input className="input mono" value={f.snPrefix} onChange={set('snPrefix')} />
+                  </Field>
+                  <Field label="Next SN number" hint={snUsed ? `Last used: ${f.snPrefix}${snUsed}` : 'No SN used yet with this prefix'}>
+                    <input className="input num" type="number" min="1" step="1" value={f.snNext} onChange={set('snNext')} />
+                  </Field>
+                  <Field label="Label width (mm)">
+                    <input className="input num" type="number" min="25" max="120" value={f.labelWidth} onChange={set('labelWidth')} />
+                  </Field>
+                  <Field label="Label height (mm)">
+                    <input className="input num" type="number" min="12" max="80" value={f.labelHeight} onChange={set('labelHeight')} />
+                  </Field>
+                </div>
+                <label className="check small">
+                  <input type="checkbox" checked={f.labelShowBattery !== false} onChange={setBool('labelShowBattery')} />
+                  Print battery health (BH) on label
+                </label>
+                <label className="check small">
+                  <input type="checkbox" checked={Boolean(f.autoPrintLabels)} onChange={setBool('autoPrintLabels')} />
+                  Print labels automatically after saving a purchase
+                </label>
+              </div>
+              <div className="stack-sm" style={{ alignItems: 'flex-start' }}>
+                <span className="field-label">Preview</span>
+                <LabelPreview device={{ ...SAMPLE_DEVICE, sn: `${f.snPrefix || ''}${Math.floor(Number(f.snNext)) || 1}` }} settings={f} />
+                <span className="xs muted">Set your label printer's paper size to {f.labelWidth || 50} × {f.labelHeight || 25} mm.</span>
+              </div>
+            </div>
           </section>
         </div>
       </form>

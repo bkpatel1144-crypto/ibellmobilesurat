@@ -18,6 +18,7 @@ const PurchaseNew = lazy(() => import('./pages/PurchaseNew'));
 const PurchaseView = lazy(() => import('./pages/PurchaseView'));
 const Stock = lazy(() => import('./pages/Stock'));
 const Repairs = lazy(() => import('./pages/Repairs'));
+const Audit = lazy(() => import('./pages/Audit'));
 const Parties = lazy(() => import('./pages/Parties'));
 const PartyView = lazy(() => import('./pages/PartyView'));
 const Analysis = lazy(() => import('./pages/Analysis'));
@@ -51,6 +52,8 @@ function Gate() {
             <Route path="purchases/:id" element={<PurchaseView />} />
             <Route path="stock" element={<Stock />} />
             <Route path="repairs" element={<Repairs />} />
+            <Route path="audit" element={<Audit />} />
+            <Route path="audit/:id" element={<Audit />} />
             <Route path="parties" element={<Parties />} />
             <Route path="parties/:id" element={<PartyView />} />
             <Route path="analysis" element={<Analysis />} />

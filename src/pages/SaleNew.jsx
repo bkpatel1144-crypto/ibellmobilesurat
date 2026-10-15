@@ -57,6 +57,7 @@ export default function SaleNew() {
         (d) =>
           !s ||
           d.imei.includes(s) ||
+          (d.sn || '').toLowerCase().includes(s) ||
           (d.imei2 || '').includes(s) ||
           deviceName(d).toLowerCase().includes(s) ||
           (d.color || '').toLowerCase().includes(s),
@@ -78,7 +79,9 @@ export default function SaleNew() {
     if (e.key !== 'Enter') return;
     e.preventDefault();
     const imei = cleanImei(q);
-    const exact = stock.find((d) => !chosen.has(d.id) && (d.imei === imei || d.imei2 === imei));
+    const exact = stock.find(
+      (d) => !chosen.has(d.id) && (d.imei === imei || d.imei2 === imei || (d.sn && d.sn.toLowerCase() === imei.toLowerCase())),
+    );
     if (exact) addDevice(exact);
     else if (matches.length === 1) addDevice(matches[0]);
   };
@@ -204,7 +207,7 @@ export default function SaleNew() {
               {q ? <Search size={16} /> : <ScanLine size={16} />}
               <input
                 className="input"
-                placeholder="Scan / type IMEI, or search brand & model…"
+                placeholder="Scan barcode / type IMEI or SN, or search model…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 onFocus={() => setPickOpen(true)}
@@ -220,7 +223,7 @@ export default function SaleNew() {
                     <span>
                       <span className="cell-main">{deviceName(d)}</span>{' '}
                       <span className="muted small">{d.color}</span>
-                      <div className="cell-sub mono">{d.imei}</div>
+                      <div className="cell-sub mono">{[d.sn, d.imei, d.battery != null && `BH ${d.battery}%`].filter(Boolean).join(' · ')}</div>
                     </span>
                     <span className="chip plain">{d.condition}</span>
                   </button>
@@ -242,7 +245,9 @@ export default function SaleNew() {
                         <span className="line-index">{i + 1}</span>
                         <div style={{ minWidth: 0 }}>
                           <div className="cell-main">{deviceName(d)} {d?.color && <span className="muted">· {d.color}</span>}</div>
-                          <div className="cell-sub mono">{[d?.imei, d?.imei2].filter(Boolean).join(' / ')}</div>
+                          <div className="cell-sub mono">
+                            {[d?.sn && `SN ${d.sn}`, [d?.imei, d?.imei2].filter(Boolean).join(' / '), d?.battery != null && `BH ${d.battery}%`].filter(Boolean).join(' · ')}
+                          </div>
                         </div>
                       </div>
                       <div className="row" style={{ gap: 6 }}>

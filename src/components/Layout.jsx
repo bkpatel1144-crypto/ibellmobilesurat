@@ -17,6 +17,7 @@ import {
   Smartphone,
   Menu,
   LockOpen,
+  ClipboardCheck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
@@ -38,6 +39,7 @@ const NAV = [
       { to: '/sales', label: 'Sales', icon: ShoppingCart },
       { to: '/purchases', label: 'Purchases', icon: ShoppingBag },
       { to: '/stock', label: 'Stock', icon: Boxes },
+      { to: '/audit', label: 'Stock Audit', icon: ClipboardCheck },
       { to: '/repairs', label: 'Repairs', icon: Wrench },
       { to: '/timeline', label: 'IMEI Timeline', icon: History },
     ],
@@ -194,7 +196,7 @@ export function PageHeader({ title, subtitle, actions, back }) {
   return (
     <header className={`topbar ${scrolled ? 'stuck' : ''}`}>
       <div className="capsule-group glass menu-btn">
-        <button className="btn btn-icon" onClick={openMenu} aria-label="Open menu">
+        <button type="button" className="btn btn-icon" onClick={openMenu} aria-label="Open menu">
           <Menu size={20} />
         </button>
       </div>

@@ -15,13 +15,15 @@ export default function Timeline() {
 
   useEffect(() => setQ(param || ''), [param]);
 
-  const imei = cleanImei(param);
+  const raw = cleanImei(param);
+  // the search accepts an SN too (e.g. G-523) - resolve it to that device's IMEI
+  const imei = devices.find((d) => d.sn && d.sn.toLowerCase() === raw.toLowerCase())?.imei || raw;
   const matches = useMemo(() => {
     const s = cleanImei(q).toLowerCase();
     if (s.length < 3 || s === imei) return [];
     const seen = new Set();
     return devices
-      .filter((d) => d.imei.includes(s) || (d.imei2 || '').includes(s) || deviceName(d).toLowerCase().includes(s))
+      .filter((d) => d.imei.includes(s) || (d.imei2 || '').includes(s) || (d.sn || '').toLowerCase().includes(s) || deviceName(d).toLowerCase().includes(s))
       .filter((d) => (seen.has(d.imei) ? false : seen.add(d.imei)))
       .slice(0, 12);
   }, [q, devices, imei]);
@@ -126,7 +128,7 @@ export default function Timeline() {
           <div className="row" style={{ flexWrap: 'nowrap' }}>
             <div className="input-group grow">
               <Search size={16} />
-              <input className="input mono" placeholder="Enter or scan IMEI…" value={q} onChange={(e) => setQ(e.target.value)} autoFocus inputMode="numeric" />
+              <input className="input mono" placeholder="Enter or scan IMEI or SN…" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
             </div>
             <button className="btn btn-primary">Search</button>
           </div>
@@ -134,7 +136,7 @@ export default function Timeline() {
             <div className="stack-sm" style={{ marginTop: 12 }}>
               {matches.map((d) => (
                 <button type="button" key={d.id} className="combo-item" onClick={() => navigate(`/timeline/${d.imei}`)}>
-                  <span><b>{deviceName(d)}</b> <span className="mono muted small">{d.imei}</span></span>
+                  <span><b>{deviceName(d)}</b> <span className="mono muted small">{[d.sn, d.imei].filter(Boolean).join(' · ')}</span></span>
                   <StatusChip status={d.status} />
                 </button>
               ))}
@@ -154,7 +156,9 @@ export default function Timeline() {
               <div className="row-between" style={{ alignItems: 'flex-start' }}>
                 <div>
                   <h2 style={{ fontSize: 22 }}>{deviceName(latest)}</h2>
-                  <div className="mono muted">{[latest.imei, latest.imei2].filter(Boolean).join(' / ')}</div>
+                  <div className="mono muted">
+                    {[latest.sn && `SN ${latest.sn}`, [latest.imei, latest.imei2].filter(Boolean).join(' / '), latest.battery != null && `BH ${latest.battery}%`].filter(Boolean).join(' · ')}
+                  </div>
                 </div>
                 <StatusChip status={latest.status} />
               </div>

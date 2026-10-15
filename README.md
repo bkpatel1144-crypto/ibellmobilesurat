@@ -11,6 +11,7 @@ Shop software for buying and selling new and used mobile phones. Built with Reac
 - **Stock**: every device with its status (in stock / in repair / sold), cost including repairs, sell or repair actions.
 - **Parties**: anyone you buy from or sell to. Ledger with running balance (PDF and Excel), plus per-party analysis.
 - **Analysis**: profit and loss, brand-wise, new vs used, top models, customers and suppliers, expenses, slow-moving stock.
+- **Stock Audit**: start an audit, scan the barcode label of every phone on the shelf (beep + big result for each scan), see Found / Missing / Extra live, mark a phone with a damaged label by hand, then complete it to save a frozen report (PDF and Excel). Scans save as you go, so an audit survives a reload and several people can scan at once. **Audit reports are deleted automatically 15 days after they are completed** (an unfinished audit 15 days after it was started).
 - **IMEI Timeline**: the full history of any IMEI: every purchase, repair and sale, with ID proofs.
 - **Banks**: cash in hand plus any number of bank accounts, statements, transfers.
 - **Payments**: all money received and paid, against a bill or on account.
@@ -45,6 +46,14 @@ The private view is a screen-level privacy feature for the shop counter. Anyone 
 Build for production with `npm run build`; deploy with `firebase deploy --only hosting`.
 
 ID proofs and the logo are compressed in the browser and stored in Firestore, so the free Spark plan is enough; no Cloud Storage bucket is needed.
+
+### Audit auto-delete (15 days)
+
+Every audit stores an `expireAt` date. The app deletes expired audits as soon as any signed-in user opens it (and re-checks every hour), and hides them immediately.
+
+For deletion even when nobody opens the app, also turn on Firestore's own TTL (free):
+Firebase console → Firestore → database **mobilebillingnew** → **TTL** → *Create policy* → collection group `audits`, timestamp field `expireAt`.
+(Firestore TTL usually removes expired documents within 24 hours of the date.)
 
 ## Deploy on Vercel
 

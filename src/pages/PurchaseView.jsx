@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Trash2, Wrench, History, Wallet, FileText } from 'lucide-react';
+import { ArrowLeft, Trash2, Wrench, History, Wallet, FileText, Barcode } from 'lucide-react';
+import { useLabels } from '../lib/useLabels';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
@@ -21,6 +22,7 @@ export default function PurchaseView() {
   const [confirmDialog, confirm] = useConfirm();
   const [repairDevice, setRepairDevice] = useState(null);
   const [payPreset, setPayPreset] = useState(null);
+  const [printLabelsFor, labelBusy] = useLabels();
 
   const p = purchases.find((x) => x.id === id);
   const devMap = useMemo(() => new Map(devices.map((d) => [d.id, d])), [devices]);
@@ -97,11 +99,18 @@ export default function PurchaseView() {
         subtitle={`${fmtDate(p.date)} · ${p.partyName}`}
         back={
           <div className="capsule-group glass">
-            <button className="btn btn-icon" onClick={() => navigate(-1)} aria-label="Back"><ArrowLeft size={18} /></button>
+            <button type="button" className="btn btn-icon" onClick={() => navigate(-1)} aria-label="Back"><ArrowLeft size={18} /></button>
           </div>
         }
         actions={
           <>
+            <button
+              className="btn"
+              disabled={labelBusy}
+              onClick={() => printLabelsFor(p.items.map((i) => devMap.get(i.deviceId)).filter(Boolean))}
+            >
+              <Barcode size={16} /> {labelBusy ? '…' : 'Labels'}
+            </button>
             <button className="btn" onClick={voucher}><FileText size={16} /> PDF</button>
             <button className="btn btn-danger" onClick={remove} aria-label="Delete purchase"><Trash2 size={16} /></button>
             {due > 0 && (
@@ -148,6 +157,8 @@ export default function PurchaseView() {
                     </div>
                   </div>
                   <dl className="dl">
+                    <div><dt>SN</dt><dd className="mono">{d?.sn || '—'}</dd></div>
+                    {d?.battery != null && <div><dt>Battery health</dt><dd className="num">{d.battery}%</dd></div>}
                     <div><dt>Purchase price</dt><dd className="num">{money(it.price)}</dd></div>
                     <div><dt>Repair cost</dt><dd className="num">{money(d?.repairCost)}</dd></div>
                     <div><dt>Total cost</dt><dd className="num">{money(num(it.price) + num(d?.repairCost))}</dd></div>
@@ -170,6 +181,11 @@ export default function PurchaseView() {
                   )}
                   <div className="row" style={{ marginTop: 12, gap: 8 }}>
                     <Link className="btn btn-sm" to={`/timeline/${it.imei}`}><History size={15} /> Timeline</Link>
+                    {d && (
+                      <button className="btn btn-sm" disabled={labelBusy} onClick={() => printLabelsFor([d])}>
+                        <Barcode size={15} /> Label
+                      </button>
+                    )}
                     {d?.status === 'in_stock' && (
                       <button className="btn btn-sm" onClick={() => setRepairDevice(d)}><Wrench size={15} /> Send to repair</button>
                     )}

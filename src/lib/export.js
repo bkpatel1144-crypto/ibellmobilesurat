@@ -252,7 +252,7 @@ export async function invoicePdf(sale, settings, { action = 'download' } = {}) {
     body: sale.items.map((it, i) => [
       i + 1,
       [it.brand, it.model, it.variant, it.color].filter(Boolean).join(' '),
-      [it.imei, it.imei2].filter(Boolean).join('\n'),
+      [it.imei, it.imei2, it.sn && `SN: ${it.sn}`].filter(Boolean).join('\n'),
       it.condition,
       it.warranty || '-',
       plain(it.price),

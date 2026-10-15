@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Search, Boxes, Wrench, ShoppingCart, History, Pencil, Plus } from 'lucide-react';
+import { Search, Boxes, Wrench, ShoppingCart, History, Pencil, Plus, Barcode } from 'lucide-react';
+import { useLabels } from '../lib/useLabels';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
@@ -18,6 +19,7 @@ export default function Stock() {
   const [q, setQ] = useState('');
   const [repairDevice, setRepairDevice] = useState(null);
   const [editing, setEditing] = useState(null);
+  const [printLabelsFor, labelBusy] = useLabels();
 
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -28,6 +30,7 @@ export default function Stock() {
         (d) =>
           !s ||
           d.imei.includes(s) ||
+          (d.sn || '').toLowerCase().includes(s) ||
           (d.imei2 || '').includes(s) ||
           deviceName(d).toLowerCase().includes(s) ||
           (d.supplierName || '').toLowerCase().includes(s) ||
@@ -115,6 +118,14 @@ export default function Stock() {
               ]}
             />
             <div className="row" style={{ marginLeft: 'auto', gap: 8 }}>
+              <button
+                className="btn btn-sm"
+                disabled={labelBusy || !rows.length}
+                onClick={() => printLabelsFor(rows)}
+                title="Print a barcode label for every device in this list"
+              >
+                <Barcode size={15} /> Labels ({rows.length})
+              </button>
               <ExportButtons build={exportSpec} small />
             </div>
           </div>
@@ -137,7 +148,9 @@ export default function Stock() {
                     <tr key={d.id}>
                       <td>
                         <div className="cell-main">{deviceName(d)}</div>
-                        <div className="cell-sub">{d.color}{d.notes ? ` · ${d.notes}` : ''}</div>
+                        <div className="cell-sub">
+                          {[d.sn && `SN ${d.sn}`, d.color, d.battery != null && `BH ${d.battery}%`, d.notes].filter(Boolean).join(' · ')}
+                        </div>
                       </td>
                       <td className="mono small">{d.imei}{d.imei2 && <div className="cell-sub">{d.imei2}</div>}</td>
                       <td><span className="chip plain">{d.condition}</span></td>
@@ -167,6 +180,9 @@ export default function Stock() {
                               </button>
                             </>
                           )}
+                          <button className="btn btn-sm btn-icon" disabled={labelBusy} onClick={() => printLabelsFor([d])} aria-label="Print label" title="Print label">
+                            <Barcode size={14} />
+                          </button>
                           <button className="btn btn-sm btn-icon" onClick={() => setEditing(d)} aria-label="Edit device" title="Edit">
                             <Pencil size={14} />
                           </button>
@@ -196,7 +212,7 @@ function EditDevice({ device, onClose }) {
   const [f, setF] = useState({});
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (device) setF({ brand: device.brand, model: device.model, variant: device.variant || '', color: device.color || '', imei2: device.imei2 || '', condition: device.condition, notes: device.notes || '' });
+    if (device) setF({ brand: device.brand, model: device.model, variant: device.variant || '', color: device.color || '', imei2: device.imei2 || '', condition: device.condition, notes: device.notes || '', battery: device.battery ?? '' });
   }, [device]);
 
   const submit = async (e) => {
@@ -210,6 +226,7 @@ function EditDevice({ device, onClose }) {
         variant: f.variant.trim(),
         color: f.color.trim(),
         imei2: f.imei2.trim(),
+        battery: f.battery === '' || f.battery == null ? null : Math.min(100, Math.max(0, Math.round(Number(f.battery)))),
         condition: f.condition,
         notes: f.notes.trim(),
       });
@@ -232,6 +249,7 @@ function EditDevice({ device, onClose }) {
           <Field label="RAM / Storage"><input className="input" value={f.variant || ''} onChange={set('variant')} /></Field>
           <Field label="Colour"><input className="input" value={f.color || ''} onChange={set('color')} /></Field>
           <Field label="IMEI 2"><input className="input mono" value={f.imei2 || ''} onChange={set('imei2')} /></Field>
+          <Field label="Battery health (%)"><input className="input num" type="number" min="0" max="100" value={f.battery ?? ''} onChange={set('battery')} /></Field>
           <Field label="Condition">
             <select className="select" value={f.condition || 'Used'} onChange={set('condition')}>
               <option>New</option>

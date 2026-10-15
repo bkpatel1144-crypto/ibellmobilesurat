@@ -4,8 +4,23 @@ import { CASH_ACCOUNT } from './db';
 /* Sign convention for parties: balance > 0 → party owes us (receivable),
    balance < 0 → we owe the party (payable). Debit raises it, credit lowers it. */
 
-export function partyEntries(partyId, { sales, purchases, payments, repairs }) {
+export function partyEntries(partyId, { sales, purchases, payments, repairs, returns = [] }) {
   const rows = [];
+  // credit note: we owe the customer back · debit note: the supplier owes us back
+  for (const x of returns) {
+    if (x.partyId !== partyId) continue;
+    const sale = x.kind === 'sale';
+    rows.push({
+      date: x.date,
+      createdAt: x.createdAt,
+      type: sale ? 'Sales Return' : 'Purchase Return',
+      ref: x.returnNo,
+      particulars: `${x.items.length} device(s) against ${x.billNo}: ${x.items.map((i) => `${i.brand} ${i.model}`).join(', ')}`,
+      debit: sale ? 0 : num(x.total),
+      credit: sale ? num(x.total) : 0,
+      link: `/returns/${x.id}`,
+    });
+  }
   for (const s of sales) {
     if (s.partyId !== partyId) continue;
     rows.push({
@@ -91,6 +106,7 @@ export function partyBalances(parties, data) {
   data.sales.forEach((s) => add(s.partyId, num(s.total)));
   data.purchases.forEach((p) => add(p.partyId, -num(p.total)));
   data.repairs.forEach((r) => r.status === 'done' && add(r.partyId, -num(r.cost)));
+  (data.returns || []).forEach((x) => add(x.partyId, x.kind === 'sale' ? -num(x.total) : num(x.total)));
   data.payments.forEach((p) => {
     if (p.direction === 'in') add(p.partyId, -num(p.amount));
     else if (p.direction === 'out') add(p.partyId, num(p.amount));

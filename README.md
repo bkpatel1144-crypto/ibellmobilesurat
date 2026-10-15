@@ -55,6 +55,21 @@ For deletion even when nobody opens the app, also turn on Firestore's own TTL (f
 Firebase console → Firestore → database **mobilebillingnew** → **TTL** → *Create policy* → collection group `audits`, timestamp field `expireAt`.
 (Firestore TTL usually removes expired documents within 24 hours of the date.)
 
+### Team, roles & security rules
+
+- `firestore.rules` has an **owners** list (currently `jenish@gmail.com`). Owners can always sign in and do everything.
+- Staff are added in the app: **Settings → Team & Roles → Add member** (it can create their login with a password).
+- **Staff permissions** (delete records, see profit & cost, reports, banks & payments, shop settings) are switched on/off there and are enforced by the rules, not only hidden in the app.
+- After changing the rules file: `firebase deploy --only firestore`.
+
+### GST
+
+Settings → Billing → GST: turn on, choose **Bank payments only** (UPI / card / bank transfer / cheque bills get GST, cash bills don't) or **Every bill**, rate (18% for phones), price includes GST or not, HSN (8517). The shop GSTIN (Settings → General) decides CGST + SGST vs IGST. Monthly figures: **GST Report** page (PDF / Excel, HSN summary).
+
+### Activity log
+
+Every change is recorded with who did it (Activity Log page, owners and staff with *Reports*). Entries are kept 180 days. For server-side clean-up add a second TTL policy: collection `activity`, field `expireAt`.
+
 ## Deploy on Vercel
 
 `vercel.json` is already set up: Vite build, `dist` output, and a rewrite so every route (`/sales/…`, `/parties/…`) loads the app on refresh.

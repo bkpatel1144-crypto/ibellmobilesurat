@@ -6,6 +6,7 @@ import { DataProvider } from './context/DataContext';
 import { ToastProvider } from './context/ToastContext';
 import { PrefsProvider } from './context/PrefsContext';
 import Layout from './components/Layout';
+import Guard from './components/Guard';
 import { SkeletonPage } from './components/ui';
 import Login from './pages/Login';
 import Setup from './pages/Setup';
@@ -17,6 +18,9 @@ const SaleView = lazy(() => import('./pages/SaleView'));
 const Purchases = lazy(() => import('./pages/Purchases'));
 const PurchaseNew = lazy(() => import('./pages/PurchaseNew'));
 const PurchaseView = lazy(() => import('./pages/PurchaseView'));
+const Returns = lazy(() => import('./pages/Returns'));
+const ReturnNew = lazy(() => import('./pages/ReturnNew'));
+const ReturnView = lazy(() => import('./pages/ReturnView'));
 const Stock = lazy(() => import('./pages/Stock'));
 const Repairs = lazy(() => import('./pages/Repairs'));
 const Audit = lazy(() => import('./pages/Audit'));
@@ -28,6 +32,8 @@ const Banks = lazy(() => import('./pages/Banks'));
 const Payments = lazy(() => import('./pages/Payments'));
 const Expenses = lazy(() => import('./pages/Expenses'));
 const SettingsPage = lazy(() => import('./pages/Settings'));
+const Gst = lazy(() => import('./pages/Gst'));
+const Activity = lazy(() => import('./pages/Activity'));
 
 function Gate() {
   const { user } = useAuth();
@@ -51,17 +57,24 @@ function Gate() {
             <Route path="purchases" element={<Purchases />} />
             <Route path="purchases/new" element={<PurchaseNew />} />
             <Route path="purchases/:id" element={<PurchaseView />} />
+            <Route path="purchases/:id/edit" element={<PurchaseNew />} />
+            <Route path="returns" element={<Returns />} />
+            <Route path="returns/new" element={<ReturnNew />} />
+            <Route path="returns/:id" element={<ReturnView />} />
+            <Route path="returns/:id/edit" element={<ReturnNew />} />
             <Route path="stock" element={<Stock />} />
             <Route path="repairs" element={<Repairs />} />
             <Route path="audit" element={<Audit />} />
             <Route path="audit/:id" element={<Audit />} />
             <Route path="parties" element={<Parties />} />
             <Route path="parties/:id" element={<PartyView />} />
-            <Route path="analysis" element={<Analysis />} />
+            <Route path="analysis" element={<Guard perm="reports" title="Analysis"><Analysis /></Guard>} />
+            <Route path="gst" element={<Guard perm="reports" title="GST Report"><Gst /></Guard>} />
+            <Route path="activity" element={<Guard perm="reports" title="Activity log"><Activity /></Guard>} />
             <Route path="timeline" element={<Timeline />} />
             <Route path="timeline/:imei" element={<Timeline />} />
-            <Route path="banks" element={<Banks />} />
-            <Route path="payments" element={<Payments />} />
+            <Route path="banks" element={<Guard perm="banks" title="Banks"><Banks /></Guard>} />
+            <Route path="payments" element={<Guard perm="banks" title="Payments"><Payments /></Guard>} />
             <Route path="expenses" element={<Expenses />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

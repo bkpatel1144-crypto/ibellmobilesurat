@@ -34,6 +34,15 @@ body,
   background: var(--scrollbar-thumb-hover);
 }
 
+/* keep the 1px bar clear of rounded corners in dropdowns and dialogs */
+.combo-list::-webkit-scrollbar-track {
+  margin-block: 12px;
+}
+
+.modal::-webkit-scrollbar-track {
+  margin-block: 24px;
+}
+
 @supports not selector(::-webkit-scrollbar) {
   /* Firefox has no pixel width - "thin" is its narrowest visible scrollbar */
   * {
@@ -958,6 +967,28 @@ table.table {
   background: var(--pressed-overlay);
 }
 
+.row-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.line.muted-line {
+  opacity: 0.62;
+}
+
+.table th.actions,
+.table td.actions {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.table td.actions {
+  padding-block: 6px;
+}
+
 .table tfoot td {
   font-weight: 700;
   border-top: 1px solid var(--color-outline);
@@ -1147,6 +1178,25 @@ table.table {
 
   .select option::checkmark {
     display: none;
+  }
+
+  /* the picker draws its own scrollbar: the global 1px style has to be targeted at it */
+  .select::picker(select)::-webkit-scrollbar {
+    width: var(--scrollbar-size);
+  }
+
+  .select::picker(select)::-webkit-scrollbar-track {
+    background: transparent;
+    margin-block: 14px;
+  }
+
+  .select::picker(select)::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: var(--radius-capsule);
+  }
+
+  .select::picker(select)::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
   }
 
   @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
@@ -1875,6 +1925,9 @@ table.table {
 
 .settings-body {
   min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
   animation: fade-in var(--dur-short) var(--ease-standard);
 }
 

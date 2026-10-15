@@ -14,6 +14,7 @@ import { money, fmtDate, inRange, round2 } from '../lib/format';
 
 export default function Banks() {
   const data = useData();
+  const canDelete = useData().can('deleteRecords');
   const { accounts, settings } = data;
   const toast = useToast();
   const [confirmDialog, confirm] = useConfirm();
@@ -44,7 +45,7 @@ export default function Banks() {
     if (ledgers.get(a.id).rows.length) return toast('This account has transactions and cannot be deleted.', 'error');
     const ok = await confirm({ title: `Delete ${a.name}?`, message: 'This cannot be undone.', confirmText: 'Delete', danger: true });
     if (!ok) return;
-    await deleteBank(a.id);
+    await deleteBank(a.id, a.name);
     setSel(CASH_ACCOUNT);
     toast('Account deleted');
   };
@@ -121,8 +122,10 @@ export default function Banks() {
               </p>
             </div>
             <div className="row" style={{ gap: 8 }}>
-              <button className="btn btn-sm" onClick={() => setEditing(account)}><Pencil size={14} /> Edit</button>
-              {!account.isCash && (
+              {(!account.isCash || data.can('editSettings')) && (
+                <button className="btn btn-sm" onClick={() => setEditing(account)}><Pencil size={14} /> Edit</button>
+              )}
+              {!account.isCash && canDelete && (
                 <button className="btn btn-sm btn-danger btn-icon" onClick={() => remove(account)} aria-label="Delete account"><Trash2 size={14} /></button>
               )}
             </div>

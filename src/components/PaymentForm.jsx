@@ -49,11 +49,11 @@ export default function PaymentForm({ open, onClose, payment, preset }) {
     if (!f?.partyId) return [];
     if (f.direction === 'in')
       return sales
-        .filter((s) => s.partyId === f.partyId && round2(num(s.total) - num(s.received)) > 0)
-        .map((s) => ({ refType: 'sale', id: s.id, no: s.invoiceNo, date: s.date, due: round2(num(s.total) - num(s.received)) }));
+        .filter((s) => s.partyId === f.partyId && round2(num(s.due)) > 0)
+        .map((s) => ({ refType: 'sale', id: s.id, no: s.invoiceNo, date: s.date, due: round2(num(s.due)) }));
     return purchases
-      .filter((p) => p.partyId === f.partyId && round2(num(p.total) - num(p.paid)) > 0)
-      .map((p) => ({ refType: 'purchase', id: p.id, no: p.purchaseNo, date: p.date, due: round2(num(p.total) - num(p.paid)) }));
+      .filter((p) => p.partyId === f.partyId && round2(num(p.due)) > 0)
+      .map((p) => ({ refType: 'purchase', id: p.id, no: p.purchaseNo, date: p.date, due: round2(num(p.due)) }));
   }, [f?.partyId, f?.direction, sales, purchases]);
 
   if (!f) return null;

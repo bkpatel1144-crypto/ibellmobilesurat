@@ -10,7 +10,7 @@ import PartyForm from '../components/PartyForm';
 import PaymentForm from '../components/PaymentForm';
 import { MoneyBars } from '../components/Charts';
 import { partyLedger, balanceLabel } from '../lib/ledger';
-import { deleteParty } from '../lib/db';
+import { deleteParty, partyInUse } from '../lib/db';
 import { money, num, fmtDate, plain, byDateDesc, monthKey, fmtMonth, deviceName } from '../lib/format';
 import { TYPE_LABEL } from './Parties';
 import Pager from '../components/Pager';
@@ -19,7 +19,9 @@ import { usePaged } from '../lib/usePaged';
 export default function PartyView() {
   const { id } = useParams();
   const data = useData();
+  const canDelete = useData().can('deleteRecords');
   const { parties, sales, purchases, devices, settings } = data;
+  const showProfit = data.can('viewProfit');
   const navigate = useNavigate();
   const toast = useToast();
   const [confirmDialog, confirm] = useConfirm();
@@ -66,7 +68,7 @@ export default function PartyView() {
   });
   const pgSales = usePaged(a.sales, {
     resetOn: [id],
-    sort: [(s) => s.date, (s) => s.invoiceNo, (s) => s.items.map((i) => `${i.brand} ${i.model}`).join(', '), (s) => num(s.total), (s) => num(s.profit)],
+    sort: [(s) => s.date, (s) => s.invoiceNo, (s) => s.items.map((i) => `${i.brand} ${i.model}`).join(', '), (s) => num(s.total), ...(showProfit ? [(s) => num(s.profit)] : [])],
   });
   const pgPurch = usePaged(a.purchases, {
     resetOn: [id],
@@ -78,10 +80,10 @@ export default function PartyView() {
     sort: [
       (d) => deviceName(d),
       (d) => d.imei,
-      devCost,
+      ...(showProfit ? [devCost] : []),
       (d) => d.status,
       (d) => (d.status === 'sold' ? num(d.salePrice) : null),
-      (d) => (d.status === 'sold' ? num(d.salePrice) - devCost(d) : null),
+      ...(showProfit ? [(d) => (d.status === 'sold' ? num(d.salePrice) - devCost(d) : null)] : []),
     ],
   });
 
@@ -97,12 +99,16 @@ export default function PartyView() {
   const bal = full.closing;
 
   const remove = async () => {
-    if (full.rows.length) return toast('This party has transactions and cannot be deleted.', 'error');
+    if (partyInUse(party.id, data.raw)) return toast('This party has transactions and cannot be deleted.', 'error');
     const ok = await confirm({ title: `Delete ${party.name}?`, message: 'This cannot be undone.', confirmText: 'Delete', danger: true });
     if (!ok) return;
-    await deleteParty(party.id);
-    toast('Party deleted');
-    navigate('/parties');
+    try {
+      await deleteParty(party.id, party.name, data.raw);
+      toast('Party deleted');
+      navigate('/parties');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
   };
 
   const balText = (v) => `${plain(Math.abs(v))} ${v > 0.004 ? 'Dr' : v < -0.004 ? 'Cr' : ''}`.trim();
@@ -161,7 +167,7 @@ export default function PartyView() {
         actions={
           <>
             <button className="btn" onClick={() => setEditing(true)} aria-label="Edit party"><Pencil size={16} /></button>
-            <button className="btn btn-danger" onClick={remove} aria-label="Delete party"><Trash2 size={16} /></button>
+            {canDelete && <button className="btn btn-danger" onClick={remove} aria-label="Delete party"><Trash2 size={16} /></button>}
             <button className="btn" onClick={() => setPayPreset({ direction: 'out', partyId: party.id, partyName: party.name, amount: bal < 0 ? -bal : '' })}>
               <ArrowUpRight size={16} /> Pay
             </button>
@@ -181,9 +187,9 @@ export default function PartyView() {
 
         <div className="kpis">
           <Kpi inverse label="Balance" value={money(Math.abs(bal))} sub={balanceLabel(bal)} />
-          <Kpi label="Sold to them" value={money(a.salesTotal)} sub={`${a.salesCount} devices · profit ${money(a.salesProfit)}`} />
+          <Kpi label="Sold to them" value={money(a.salesTotal)} sub={showProfit ? `${a.salesCount} devices · profit ${money(a.salesProfit)}` : `${a.salesCount} devices`} />
           <Kpi label="Bought from them" value={money(a.purchTotal)} sub={`${a.purchCount} devices`} />
-          <Kpi label="Profit on their devices" value={money(a.supplyProfit)} sub={`${a.soldFromThem} of ${a.fromThem.length} sold`} />
+          {showProfit && <Kpi label="Profit on their devices" value={money(a.supplyProfit)} sub={`${a.soldFromThem} of ${a.fromThem.length} sold`} />}
         </div>
 
         <section className="card card-lg">
@@ -265,7 +271,7 @@ export default function PartyView() {
             (a.sales.length ? (
               <div className="table-wrap">
               <table className="table" {...pgSales.tableProps}>
-                <thead><tr><th>Date</th><th>Invoice</th><th>Devices</th><th className="num">Total</th><th className="num">Profit</th></tr></thead>
+                <thead><tr><th>Date</th><th>Invoice</th><th>Devices</th><th className="num">Total</th>{showProfit && <th className="num">Profit</th>}</tr></thead>
                 <tbody>
                   {pgSales.rows.map((s) => (
                     <tr key={s.id} className="clickable" onClick={() => navigate(`/sales/${s.id}`)}>
@@ -273,7 +279,7 @@ export default function PartyView() {
                       <td className="cell-main">{s.invoiceNo}</td>
                       <td className="small">{s.items.map((i) => `${i.brand} ${i.model}`).join(', ')}</td>
                       <td className="num">{money(s.total)}</td>
-                      <td className="num">{money(s.profit)}</td>
+                      {showProfit && <td className="num">{money(s.profit)}</td>}
                     </tr>
                   ))}
                 </tbody>
@@ -311,7 +317,7 @@ export default function PartyView() {
             (a.fromThem.length ? (
               <div className="table-wrap">
               <table className="table" {...pgDevices.tableProps}>
-                <thead><tr><th>Device</th><th>IMEI</th><th className="num">Cost</th><th>Status</th><th className="num">Sold for</th><th className="num">Profit</th></tr></thead>
+                <thead><tr><th>Device</th><th>IMEI</th>{showProfit && <th className="num">Cost</th>}<th>Status</th><th className="num">Sold for</th>{showProfit && <th className="num">Profit</th>}</tr></thead>
                 <tbody>
                   {pgDevices.rows.map((d) => {
                     const c = num(d.purchasePrice) + num(d.repairCost);
@@ -319,10 +325,10 @@ export default function PartyView() {
                       <tr key={d.id} className="clickable" onClick={() => navigate(`/timeline/${d.imei}`)}>
                         <td className="cell-main">{deviceName(d)}</td>
                         <td className="mono small">{d.imei}</td>
-                        <td className="num">{money(c)}</td>
+                        {showProfit && <td className="num">{money(c)}</td>}
                         <td><StatusChip status={d.status} /></td>
                         <td className="num">{d.status === 'sold' ? money(d.salePrice) : '—'}</td>
-                        <td className="num">{d.status === 'sold' ? money(num(d.salePrice) - c) : '—'}</td>
+                        {showProfit && <td className="num">{d.status === 'sold' ? money(num(d.salePrice) - c) : '—'}</td>}
                       </tr>
                     );
                   })}
@@ -344,7 +350,7 @@ export default function PartyView() {
               <dl className="dl">
                 <div><dt>Avg. sale per device</dt><dd className="num">{money(a.salesCount ? a.salesTotal / a.salesCount : 0)}</dd></div>
                 <div><dt>Avg. buy per device</dt><dd className="num">{money(a.purchCount ? a.purchTotal / a.purchCount : 0)}</dd></div>
-                <div><dt>Margin on sales</dt><dd className="num">{a.salesTotal ? ((a.salesProfit / a.salesTotal) * 100).toFixed(1) : '0.0'}%</dd></div>
+                {showProfit && <div><dt>Margin on sales</dt><dd className="num">{a.salesTotal ? ((a.salesProfit / a.salesTotal) * 100).toFixed(1) : '0.0'}%</dd></div>}
                 <div><dt>Unsold from them</dt><dd className="num">{a.fromThem.length - a.soldFromThem} devices</dd></div>
               </dl>
             </div>

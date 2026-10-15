@@ -3,14 +3,22 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Plus, Search, ShoppingCart, EyeOff } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
-import { Empty, Segmented } from '../components/ui';
+import { Empty, Segmented, useConfirm } from '../components/ui';
+import RowActions from '../components/RowActions';
+import { useToast } from '../context/ToastContext';
+import { deleteSale } from '../lib/db';
 import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
 import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
 import { money, num, fmtDate, inRange, byDateDesc, round2 } from '../lib/format';
 
 export default function Sales() {
-  const { sales, settings, privacy } = useData();
+  const data = useData();
+  const { sales, settings, privacy, can } = data;
+  const canDelete = can('deleteRecords');
+  const toast = useToast();
+  const [confirmDialog, confirm] = useConfirm();
+  const showProfit = can('viewProfit');
   const navigate = useNavigate();
   const [range, setRange] = useState(defaultRange);
   const [q, setQ] = useState('');
@@ -21,10 +29,11 @@ export default function Sales() {
     return sales
       .filter((x) => inRange(x.date, range.from, range.to))
       .filter((x) => {
-        const due = round2(num(x.total) - num(x.received));
+        const due = round2(num(x.due));
         if (status === 'due') return due > 0;
         if (status === 'paid') return due <= 0;
         if (status === 'private') return x.hidden;
+        if (status === 'returned') return x.returnedCount > 0;
         return true;
       })
       .filter(
@@ -42,10 +51,12 @@ export default function Sales() {
     (a, x) => ({
       total: a.total + num(x.total),
       received: a.received + num(x.received),
+      due: a.due + num(x.due),
+      returned: a.returned + num(x.returned),
       profit: a.profit + num(x.profit),
       devices: a.devices + x.items.length,
     }),
-    { total: 0, received: 0, profit: 0, devices: 0 },
+    { total: 0, received: 0, profit: 0, devices: 0, due: 0, returned: 0 },
   );
 
   const pg = usePaged(rows, {
@@ -56,8 +67,8 @@ export default function Sales() {
       (x) => x.customerName,
       (x) => x.items.map((i) => `${i.brand} ${i.model}`).join(', '),
       (x) => num(x.total),
-      (x) => num(x.profit),
-      (x) => round2(num(x.total) - num(x.received)),
+      ...(showProfit ? [(x) => num(x.profit)] : []),
+      (x) => round2(num(x.due)),
     ],
   });
 
@@ -74,9 +85,10 @@ export default function Sales() {
       { header: 'Devices', key: 'devices' },
       { header: 'Mode', key: 'mode' },
       { header: 'Total', key: 'total', money: true },
+      { header: 'Returned', key: 'returned', money: true },
       { header: 'Received', key: 'received', money: true },
       { header: 'Due', key: 'due', money: true },
-      { header: 'Profit', key: 'profit', money: true },
+      ...(showProfit ? [{ header: 'Profit', key: 'profit', money: true }] : []),
     ],
     rows: rows.map((x) => ({
       date: fmtDate(x.date),
@@ -86,16 +98,34 @@ export default function Sales() {
       mode: x.mode,
       total: x.total,
       received: x.received,
-      due: round2(num(x.total) - num(x.received)),
+      returned: x.returned || '',
+      due: round2(num(x.due)),
       profit: x.profit,
     })),
-    foot: { date: 'Total', devices: `${tot.devices} devices`, total: tot.total, received: tot.received, due: tot.total - tot.received, profit: tot.profit },
+    foot: { date: 'Total', devices: `${tot.devices} devices`, total: tot.total, received: tot.received, due: tot.due, returned: tot.returned, profit: tot.profit },
   });
+
+  const remove = async (x) => {
+    const ok = await confirm({
+      title: `Delete ${x.invoiceNo}?`,
+      message: 'The devices go back to stock and the payments for this bill are removed. This cannot be undone.',
+      confirmText: 'Delete bill',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteSale(x, data.raw);
+      toast(`${x.invoiceNo} deleted, devices back in stock`);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
 
   const filters = [
     { value: 'all', label: 'All' },
     { value: 'due', label: 'Due' },
     { value: 'paid', label: 'Paid' },
+    { value: 'returned', label: 'Returns' },
     ...(privacy.unlocked ? [{ value: 'private', label: 'Private' }] : []),
   ];
 
@@ -133,13 +163,14 @@ export default function Sales() {
                   <th>Customer</th>
                   <th>Devices</th>
                   <th className="num">Total</th>
-                  <th className="num">Profit</th>
+                  {showProfit && <th className="num">Profit</th>}
                   <th className="num">Status</th>
+                  <th className="actions">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {pg.rows.map((x) => {
-                  const due = round2(num(x.total) - num(x.received));
+                  const due = round2(num(x.due));
                   return (
                     <tr key={x.id} className="clickable" onClick={() => navigate(`/sales/${x.id}`)}>
                       <td className="tnum">{fmtDate(x.date)}</td>
@@ -155,8 +186,21 @@ export default function Sales() {
                         {x.items.length > 2 && <span className="muted"> +{x.items.length - 2}</span>}
                       </td>
                       <td className="num cell-main">{money(x.total)}</td>
-                      <td className="num">{money(x.profit)}</td>
-                      <td className="num">{due > 0 ? <span className="chip caution">Due {money(due)}</span> : <span className="chip success">Paid</span>}</td>
+                      {showProfit && <td className="num">{money(x.profit)}</td>}
+                      <td className="num">
+                        <div className="row" style={{ gap: 4, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                          {x.returnedCount > 0 && <span className="chip plain" title={`${money(x.returned)} returned`}>{x.returnedCount >= x.items.length ? 'Returned' : `${x.returnedCount} returned`}</span>}
+                          {due > 0 ? <span className="chip caution">Due {money(due)}</span> : due < -0.004 ? <span className="chip caution">Refund {money(-due)}</span> : <span className="chip success">Paid</span>}
+                        </div>
+                      </td>
+                      <td className="actions">
+                        <RowActions
+                          onEdit={() => navigate(`/sales/${x.id}?edit=1`)}
+                          onDelete={canDelete ? () => remove(x) : null}
+                          editLabel={`Edit ${x.invoiceNo}`}
+                          deleteLabel={`Delete ${x.invoiceNo}`}
+                        />
+                      </td>
                     </tr>
                   );
                 })}
@@ -165,8 +209,9 @@ export default function Sales() {
                 <tr>
                   <td colSpan={4}>Total</td>
                   <td className="num">{money(tot.total)}</td>
-                  <td className="num">{money(tot.profit)}</td>
-                  <td className="num">{money(tot.total - tot.received)} due</td>
+                  {showProfit && <td className="num">{money(tot.profit)}</td>}
+                  <td className="num">{money(tot.due)} due</td>
+                  <td />
                 </tr>
               </tfoot>
             </table>
@@ -181,6 +226,7 @@ export default function Sales() {
           />
         )}
       </section>
+      {confirmDialog}
     </div>
   );
 }

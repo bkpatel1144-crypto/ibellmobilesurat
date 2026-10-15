@@ -10,7 +10,7 @@ import { money, num, round2, inRange, monthKey, fmtMonth, fmtDate, fmtDateShort,
 const pct = (a, b) => (b ? `${((a / b) * 100).toFixed(1)}%` : '0.0%');
 
 export default function Analysis() {
-  const { sales, purchases, expenses, devices, payments, settings } = useData();
+  const { sales, purchases, expenses, devices, payments, settings, returns } = useData();
   const [range, setRange] = useState(defaultRange);
 
   const r = useMemo(() => {
@@ -18,15 +18,23 @@ export default function Analysis() {
     const P = purchases.filter((p) => inRange(p.date, range.from, range.to));
     const E = expenses.filter((e) => inRange(e.date, range.from, range.to));
     const PAY = payments.filter((p) => inRange(p.date, range.from, range.to));
+    // returns land in the period they are made (as the GST credit / debit note does)
+    const SR = returns.filter((x) => x.kind === 'sale' && inRange(x.date, range.from, range.to));
+    const PR = returns.filter((x) => x.kind === 'purchase' && inRange(x.date, range.from, range.to));
     const sum = (arr, f) => arr.reduce((t, x) => t + num(f(x)), 0);
 
-    const revenue = sum(S, (s) => s.total);
-    const tax = sum(S, (s) => s.tax);
-    const cogs = sum(S, (s) => s.cost);
-    const gross = sum(S, (s) => s.profit);
+    const grossSales = sum(S, (s) => s.total);
+    const salesReturns = sum(SR, (x) => x.total);
+    const revenue = grossSales - salesReturns;
+    const tax = sum(S, (s) => s.tax) - sum(SR, (x) => x.tax);
+    const cogs = sum(S, (s) => s.cost) - sum(SR, (x) => x.cost);
+    const prGain = sum(PR, (x) => x.profit); // + gain / − loss on phones sent back
+    const gross = sum(S, (s) => s.profit) - sum(SR, (x) => x.profit) + prGain;
     const exp = sum(E, (e) => e.amount);
-    const sold = S.reduce((t, s) => t + s.items.length, 0);
-    const bought = P.reduce((t, p) => t + p.items.length, 0);
+    const sold = S.reduce((t, s) => t + s.items.length, 0) - SR.reduce((t, x) => t + x.items.length, 0);
+    const bought = P.reduce((t, p) => t + p.items.length, 0) - PR.reduce((t, x) => t + x.items.length, 0);
+    const purchGross = sum(P, (p) => p.total);
+    const purchReturns = sum(PR, (x) => x.total);
 
     // time series - by day for short ranges, by month otherwise
     const from = range.from || [...S, ...P].map((x) => x.date).sort()[0] || today();
@@ -57,6 +65,17 @@ export default function Analysis() {
       const b = buckets.get(keyOf(e.date));
       if (b) b.net -= num(e.amount);
     }
+    for (const x of SR) {
+      const b = buckets.get(keyOf(x.date));
+      if (b) {
+        b.rev -= num(x.total);
+        b.net -= num(x.profit);
+      }
+    }
+    for (const x of PR) {
+      const b = buckets.get(keyOf(x.date));
+      if (b) b.net += num(x.profit);
+    }
     const label = (k) => (daily ? fmtDateShort(k) : fmtMonth(k));
     const full = (k) => (daily ? fmtDate(k) : fmtMonth(k));
     const revSeries = [...buckets.entries()].map(([k, b]) => ({ label: label(k), fullLabel: full(k), value: round2(b.rev), count: b.n }));
@@ -74,7 +93,15 @@ export default function Analysis() {
           g.cost += num(it.cost);
           m.set(k, g);
         }
-      return [...m.values()].map((g) => ({ ...g, profit: g.rev - g.cost })).sort((a, b) => b.rev - a.rev);
+      for (const x of SR)
+        for (const it of x.items) {
+          const g = m.get(keyFn(it));
+          if (!g) continue;
+          g.n -= 1;
+          g.rev -= num(it.value);
+          g.cost -= num(it.cost);
+        }
+      return [...m.values()].filter((g) => g.n > 0).map((g) => ({ ...g, profit: g.rev - g.cost })).sort((a, b) => b.rev - a.rev);
     };
     const brands = group((it) => it.brand || 'Other');
     const conds = group((it) => it.condition || 'Used');
@@ -89,12 +116,26 @@ export default function Analysis() {
       g.n += s.items.length;
       cust.set(k, g);
     }
+    for (const x of SR) {
+      const g = cust.get(x.partyId || 'walkin');
+      if (g) {
+        g.value -= num(x.total);
+        g.n -= x.items.length;
+      }
+    }
     const sup = new Map();
     for (const p of P) {
       const g = sup.get(p.partyId) || { label: p.partyName, value: 0, n: 0 };
       g.value += num(p.total);
       g.n += p.items.length;
       sup.set(p.partyId, g);
+    }
+    for (const x of PR) {
+      const g = sup.get(x.partyId);
+      if (g) {
+        g.value -= num(x.total);
+        g.n -= x.items.length;
+      }
     }
     const expCat = new Map();
     for (const e of E) expCat.set(e.category, (expCat.get(e.category) || 0) + num(e.amount));
@@ -116,7 +157,14 @@ export default function Analysis() {
       gross,
       exp,
       net: gross - exp,
-      purchTotal: sum(P, (p) => p.total),
+      purchTotal: purchGross - purchReturns,
+      purchGross,
+      purchReturns,
+      grossSales,
+      salesReturns,
+      srCount: SR.length,
+      prCount: PR.length,
+      prGain,
       sold,
       bought,
       bills: S.length,
@@ -129,13 +177,13 @@ export default function Analysis() {
       brands,
       conds,
       models,
-      customers: [...cust.values()].sort((a, b) => b.value - a.value).slice(0, 8).map((g) => ({ ...g, sub: `${g.n} devices` })),
+      customers: [...cust.values()].filter((g) => g.n > 0).sort((a, b) => b.value - a.value).slice(0, 8).map((g) => ({ ...g, sub: `${g.n} devices` })),
       suppliers: [...sup.values()].sort((a, b) => b.value - a.value).slice(0, 8).map((g) => ({ ...g, sub: `${g.n} devices` })),
       expCat: [...expCat.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value),
       modes: [...modes.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value),
       aging,
     };
-  }, [sales, purchases, expenses, devices, payments, range]);
+  }, [sales, purchases, expenses, devices, payments, returns, range]);
 
   const period = `${range.from ? fmtDate(range.from) : 'Beginning'} to ${range.to ? fmtDate(range.to) : 'Today'}`;
 
@@ -149,13 +197,18 @@ export default function Analysis() {
       { header: 'Amount', key: 'v', money: true },
     ],
     rows: [
-      { k: `Sales (${r.bills} bills, ${r.sold} devices)`, v: r.revenue },
+      { k: `Sales (${r.bills} bills)`, v: r.grossSales },
+      ...(r.srCount ? [{ k: `Less: Sales returns (${r.srCount} credit notes)`, v: r.salesReturns }] : []),
+      { k: `Net sales (${r.sold} devices)`, v: r.revenue },
       { k: 'Less: GST collected', v: r.tax },
       { k: 'Less: Cost of devices sold (incl. repair)', v: r.cogs },
+      ...(r.prCount ? [{ k: `${r.prGain >= 0 ? 'Add: Gain' : 'Less: Loss'} on purchase returns`, v: Math.abs(r.prGain) }] : []),
       { k: 'Gross profit', v: r.gross },
       { k: 'Less: Expenses', v: r.exp },
       { k: 'Net profit', v: r.net },
-      { k: `Purchases in period (${r.bought} devices)`, v: r.purchTotal },
+      { k: 'Purchases in period', v: r.purchGross },
+      ...(r.prCount ? [{ k: `Less: Purchase returns (${r.prCount} debit notes)`, v: r.purchReturns }] : []),
+      { k: `Net purchases (${r.bought} devices)`, v: r.purchTotal },
       { k: `Closing stock value (${r.stockCount} devices)`, v: r.stockValue },
     ],
   });
@@ -186,11 +239,11 @@ export default function Analysis() {
         </div>
 
         <div className="kpis cascade">
-          <Kpi inverse icon={IndianRupee} label="Sales" value={money(r.revenue)} sub={`${r.bills} bills · ${r.sold} devices`} />
+          <Kpi inverse icon={IndianRupee} label="Net sales" value={money(r.revenue)} sub={r.srCount ? `${r.bills} bills · less ${money(r.salesReturns)} returns` : `${r.bills} bills · ${r.sold} devices`} />
           <Kpi icon={TrendingUp} label="Gross profit" value={money(r.gross)} sub={`Margin ${pct(r.gross, r.revenue - r.tax)}`} />
           <Kpi icon={Receipt} label="Expenses" value={money(r.exp)} />
           <Kpi icon={Percent} label="Net profit" value={money(r.net)} sub="Gross profit − expenses" />
-          <Kpi icon={ShoppingBag} label="Purchases" value={money(r.purchTotal)} sub={`${r.bought} devices`} />
+          <Kpi icon={ShoppingBag} label="Net purchases" value={money(r.purchTotal)} sub={r.prCount ? `${r.bought} devices · less ${money(r.purchReturns)} returns` : `${r.bought} devices`} />
           <Kpi icon={ShoppingCart} label="Avg. selling price" value={money(r.avg)} sub="Per device, before GST" />
           <Kpi icon={Boxes} label="Stock value" value={money(r.stockValue)} sub={`${r.stockCount} devices now`} />
         </div>
@@ -198,7 +251,7 @@ export default function Analysis() {
         <div className="grid grid-2">
           <section className="card card-lg">
             <h2 style={{ fontSize: 16 }}>Sales</h2>
-            <p className="muted small" style={{ margin: '2px 0 12px' }}>Bill total per {r.daily ? 'day' : 'month'}</p>
+            <p className="muted small" style={{ margin: '2px 0 12px' }}>Bill total less returns, per {r.daily ? 'day' : 'month'}</p>
             <MoneyBars data={r.revSeries} valueLabel="bill(s)" />
           </section>
           <section className="card card-lg">

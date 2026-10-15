@@ -20,7 +20,11 @@ import {
   RotateCcw,
   Check,
   LogOut,
+  UserCog,
+  Database,
   Paintbrush,
+  Plus,
+  Download,
   Pipette,
   CircleCheck,
   CircleAlert,
@@ -31,20 +35,26 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { usePrefs } from '../context/PrefsContext';
 import { PageHeader } from '../components/Layout';
-import { Field, Segmented } from '../components/ui';
+import { Field, Segmented, Modal, useConfirm } from '../components/ui';
 import PasskeyModal from '../components/PasskeyModal';
+import RowActions from '../components/RowActions';
 import LabelPreview from '../components/LabelPreview';
 import { labelLayout, LABEL_FONT_DEFAULTS } from '../lib/labels';
 import { saveSettings, maxNumber } from '../lib/db';
 import { fileToLogo } from '../lib/files';
 import { FONTS, ACCENTS, DUOS, TONES, preloadFonts, textOn } from '../lib/prefs';
 import { fmtDate, today, addDays } from '../lib/format';
+import { validGstin, stateOf, stateName } from '../lib/gst';
+import { PERMS, STAFF_DEFAULTS, saveMember, removeMember, createLogin, emailKey } from '../lib/team';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../firebase';
 
 const FIELDS = [
   'shopName', 'tagline', 'address', 'phone', 'email', 'gstin', 'logo',
-  'invoicePrefix', 'cashInvoicePrefix', 'purchasePrefix', 'defaultTax', 'defaultWarranty', 'invoiceTerms', 'invoiceFooter',
+  'invoicePrefix', 'cashInvoicePrefix', 'purchasePrefix', 'saleReturnPrefix', 'cashReturnPrefix', 'purchaseReturnPrefix', 'defaultTax', 'defaultWarranty', 'invoiceTerms', 'invoiceFooter',
   'snPrefix', 'snNext', 'labelWidth', 'labelHeight', 'labelShowBattery', 'autoPrintLabels',
   'labelTitlePt', 'labelCodePt', 'labelInfoPt', 'labelShowWarranty',
+  'gstEnabled', 'gstRate', 'gstOn', 'gstInclusive', 'hsnDefault',
 ];
 
 const SAMPLE_DEVICE = { brand: 'Apple', model: 'iPhone 15 Pro', variant: '256', color: 'White', imei: '355262965973925', battery: 95, warranty: '6 Months' };
@@ -57,15 +67,19 @@ const TABS = [
   { id: 'colors', label: 'Colors', icon: Paintbrush, hint: 'Accent, background and status colours' },
   { id: 'sidebar', label: 'Sidebar', icon: PanelLeft, hint: 'Sidebar style and size' },
   { id: 'tables', label: 'Tables & Lists', icon: Table, hint: 'Rows, dates and start page' },
+  { id: 'team', label: 'Team & Roles', icon: UserCog, owner: true, hint: 'Who can sign in and what staff can do' },
+  { id: 'data', label: 'Data & Backup', icon: Database, owner: true, hint: 'Records, storage and full backup' },
   { id: 'account', label: 'Account & Security', icon: ShieldCheck, hint: 'Password and passkey' },
 ];
 
 export default function Settings() {
-  const { settings, privacy, raw } = useData();
+  const { settings, privacy, raw, me, can } = useData();
+  const canEdit = can('editSettings');
+  const tabs = TABS.filter((t) => !t.owner || me.isOwner);
   const { user, logout } = useAuth();
   const toast = useToast();
   const [params, setParams] = useSearchParams();
-  const tab = TABS.find((t) => t.id === params.get('tab')) || TABS[0];
+  const tab = tabs.find((t) => t.id === params.get('tab')) || tabs[0];
   const [f, setF] = useState(() => pick(settings));
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -109,7 +123,14 @@ export default function Settings() {
         labelTitlePt: Number(f.labelTitlePt) || LABEL_FONT_DEFAULTS.labelTitlePt,
         labelCodePt: Number(f.labelCodePt) || LABEL_FONT_DEFAULTS.labelCodePt,
         labelInfoPt: Number(f.labelInfoPt) || LABEL_FONT_DEFAULTS.labelInfoPt,
+        gstRate: Number(f.gstRate) || 0,
+        hsnDefault: String(f.hsnDefault || '8517').trim(),
+        gstin: String(f.gstin || '').trim().toUpperCase(),
       };
+      if (data.gstEnabled && !validGstin(data.gstin)) {
+        setBusy(false);
+        return toast('Enter the shop GSTIN (Settings → General) before turning GST on', 'error');
+      }
       // the SN counter moves on every purchase - only write it when it was edited here
       if (!snChanged) delete data.snNext;
       await saveSettings(data);
@@ -155,20 +176,22 @@ export default function Settings() {
         title="Settings"
         subtitle={tab.hint}
         actions={
-          tab.shop ? (
+          tab.shop && canEdit ? (
             <>
               {dirty && <span className="chip caution" style={{ margin: '0 6px' }}>Unsaved changes</span>}
               <button type="button" className="btn btn-primary" disabled={busy || !dirty} onClick={save}>
                 <Save size={16} /> {busy ? 'Saving…' : 'Save'}
               </button>
             </>
+          ) : tab.shop ? (
+            <span className="chip plain">View only</span>
           ) : null
         }
       />
 
       <div className="settings">
         <nav className="settings-nav" aria-label="Settings sections">
-          {TABS.map((t) => {
+          {tabs.map((t) => {
             const Icon = t.icon;
             return (
               <button
@@ -185,7 +208,7 @@ export default function Settings() {
           })}
         </nav>
 
-        <div className="settings-body" key={tab.id}>
+        <fieldset className="settings-body" key={tab.id} disabled={Boolean(tab.shop && !canEdit)}>
           {tab.id === 'general' && (
             <form onSubmit={save} className="stack">
               <Section title="Shop profile" desc="Shown on the sidebar and printed on every bill and report.">
@@ -229,11 +252,44 @@ export default function Settings() {
                     <Field label="Private bill prefix" hint="Separate series for private sales"><input className="input mono" value={f.cashInvoicePrefix} onChange={set('cashInvoicePrefix')} /></Field>
                   )}
                   <Field label="Purchase prefix"><input className="input mono" value={f.purchasePrefix} onChange={set('purchasePrefix')} /></Field>
+                  <Field label="Sales return prefix" hint="Credit note, e.g. CN- → CN-0001"><input className="input mono" value={f.saleReturnPrefix} onChange={set('saleReturnPrefix')} /></Field>
+                  {privacy.unlocked && (
+                    <Field label="Private return prefix" hint="Returns of private bills"><input className="input mono" value={f.cashReturnPrefix} onChange={set('cashReturnPrefix')} /></Field>
+                  )}
+                  <Field label="Purchase return prefix" hint="Debit note, e.g. DN- → DN-0001"><input className="input mono" value={f.purchaseReturnPrefix} onChange={set('purchaseReturnPrefix')} /></Field>
                 </div>
+              </Section>
+              <Section title="GST" desc="Bills with GST print as a Tax Invoice with CGST / SGST (or IGST for another state) and appear in the GST Report.">
+                <OptionRow title="Charge GST" desc={f.gstin ? `Shop GSTIN ${f.gstin}${stateOf(f.gstin) ? ` · ${stateName(stateOf(f.gstin))}` : ''}` : 'Add the shop GSTIN in General first'}>
+                  <Toggle checked={Boolean(f.gstEnabled)} onChange={setBool('gstEnabled')} label={f.gstEnabled ? 'On' : 'Off'} />
+                </OptionRow>
+                {f.gstEnabled && (
+                  <>
+                    <OptionRow title="Charge GST on" desc="'Bank payments only' = bills paid by UPI, card, bank transfer or cheque get GST; cash bills don't.">
+                      <Segmented
+                        label="Charge GST on"
+                        value={f.gstOn || 'bank'}
+                        onChange={(v) => edit('gstOn', v)}
+                        options={[{ value: 'bank', label: 'Bank payments only' }, { value: 'all', label: 'Every bill' }]}
+                      />
+                    </OptionRow>
+                    <OptionRow title="Selling price" desc="'Includes GST' = the customer pays the price you type; GST is taken out of it.">
+                      <Segmented
+                        label="Selling price"
+                        value={f.gstInclusive === false ? 'no' : 'yes'}
+                        onChange={(v) => edit('gstInclusive', v === 'yes')}
+                        options={[{ value: 'yes', label: 'Includes GST' }, { value: 'no', label: 'GST added on top' }]}
+                      />
+                    </OptionRow>
+                    <div className="form-grid" style={{ marginTop: 12 }}>
+                      <Field label="GST rate %" hint="Mobile phones: 18%"><input className="input num" type="number" min="0" step="0.01" value={f.gstRate} onChange={set('gstRate')} /></Field>
+                      <Field label="Default HSN code" hint="Mobile phones: 8517"><input className="input mono" value={f.hsnDefault} onChange={set('hsnDefault')} /></Field>
+                    </div>
+                  </>
+                )}
               </Section>
               <Section title="Defaults on a new bill">
                 <div className="form-grid">
-                  <Field label="Default GST %"><input className="input num" type="number" min="0" step="0.01" value={f.defaultTax} onChange={set('defaultTax')} /></Field>
                   <Field label="Default warranty (used phones)"><input className="input" value={f.defaultWarranty} onChange={set('defaultWarranty')} placeholder="e.g. 7 days checking warranty" /></Field>
                 </div>
               </Section>
@@ -324,7 +380,9 @@ export default function Settings() {
               </Section>
             </div>
           )}
-        </div>
+          {tab.id === 'team' && <TeamTab />}
+          {tab.id === 'data' && <DataTab />}
+        </fieldset>
       </div>
       <PasskeyModal open={changingKey} forceSet onClose={(ok) => { setChangingKey(false); if (ok) toast('Passkey changed'); }} />
     </div>
@@ -793,6 +851,298 @@ function TablesTab() {
             <option value="/stock">Stock</option>
           </select>
         </OptionRow>
+      </Section>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ team & roles (owner only) */
+
+function TeamTab() {
+  const { raw, settings, me } = useData();
+  const toast = useToast();
+  const [confirmDialog, confirm] = useConfirm();
+  const [adding, setAdding] = useState(false);
+  const [renaming, setRenaming] = useState(null);
+  const members = [...raw.team].sort((a, b) => (a.role === b.role ? (a.email || a.id).localeCompare(b.email || b.id) : a.role === 'owner' ? -1 : 1));
+  const perms = { ...STAFF_DEFAULTS, ...(settings.staffPerms || {}) };
+
+  const setPerm = async (key, value) => {
+    try {
+      await saveSettings({ staffPerms: { ...perms, [key]: value } });
+      toast(`Staff: ${PERMS.find((p) => p.key === key).label} ${value ? 'on' : 'off'}`);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
+
+  const change = async (m, patch, msg) => {
+    try {
+      await saveMember({ email: m.id, name: m.name, role: m.role, active: m.active !== false, ...patch });
+      toast(msg);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
+
+  const remove = async (m) => {
+    const ok = await confirm({
+      title: `Remove ${m.name || m.id}?`,
+      message: 'They will not be able to open the shop data any more. Their past bills and entries stay.',
+      confirmText: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await removeMember(m.id);
+      toast('Member removed');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
+
+  return (
+    <div className="stack">
+      <Section title="Team" desc="Everyone who can sign in. Owners can do everything; staff get the permissions below.">
+        <div className="row-between" style={{ marginBottom: 12 }}>
+          <span className="small muted">{members.length} member(s)</span>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => setAdding(true)}>
+            <Plus size={15} /> Add member
+          </button>
+        </div>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr><th>Name</th><th>E-mail</th><th>Role</th><th>Access</th><th className="actions">Actions</th></tr>
+            </thead>
+            <tbody>
+              {members.map((m) => {
+                const self = m.id === me.email;
+                return (
+                  <tr key={m.id}>
+                    <td className="cell-main">{m.name || '—'}{self && <span className="chip plain" style={{ marginLeft: 6 }}>You</span>}</td>
+                    <td className="small">{m.email || m.id}</td>
+                    <td>
+                      <select
+                        className="select"
+                        style={{ width: 120, height: 36 }}
+                        value={m.role}
+                        disabled={self}
+                        onChange={(e) => change(m, { role: e.target.value }, `${m.name || m.id} is now ${e.target.value}`)}
+                        aria-label={`Role of ${m.id}`}
+                      >
+                        <option value="owner">Owner</option>
+                        <option value="staff">Staff</option>
+                      </select>
+                    </td>
+                    <td>
+                      <Toggle
+                        checked={m.active !== false}
+                        onChange={(e) => !self && change(m, { active: e.target.checked }, e.target.checked ? 'Access switched on' : 'Access switched off')}
+                        label={m.active !== false ? 'Active' : 'Blocked'}
+                      />
+                    </td>
+                    <td className="actions">
+                      <RowActions
+                        onEdit={() => setRenaming(m)}
+                        onDelete={self ? null : () => remove(m)}
+                        editLabel={`Edit ${m.name || m.id}`}
+                        deleteLabel={`Remove ${m.name || m.id}`}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+
+      <Section title="Staff permissions" desc="What staff members may do. Owners always can. These are also enforced by the database rules.">
+        {PERMS.map((p) => (
+          <OptionRow key={p.key} title={p.label} desc={p.desc}>
+            <Toggle checked={Boolean(perms[p.key])} onChange={(e) => setPerm(p.key, e.target.checked)} label={perms[p.key] ? 'Allowed' : 'Not allowed'} />
+          </OptionRow>
+        ))}
+      </Section>
+
+      <Section title="Main owner" desc="The owner e-mail(s) in firestore.rules can always sign in, even if removed here. Change that list and deploy the rules to hand over the shop." />
+      {confirmDialog}
+      <AddMember open={adding} onClose={() => setAdding(false)} existing={members.map((m) => m.id)} />
+      <EditMember member={renaming} onSave={change} onClose={() => setRenaming(null)} />
+    </div>
+  );
+}
+
+function EditMember({ member, onSave, onClose }) {
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (member) setName(member.name || '');
+  }, [member]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    await onSave(member, { name: name.trim() }, 'Member updated');
+    setBusy(false);
+    onClose();
+  };
+
+  return (
+    <Modal open={Boolean(member)} onClose={onClose} title="Edit team member" subtitle={member?.email || member?.id}>
+      <form onSubmit={submit} className="stack">
+        <Field label="Name" hint="Shown in the activity log and on bills they enter">
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        </Field>
+        <p className="small muted" style={{ margin: 0 }}>Role and access are changed right in the team list. The e-mail can't change - remove the member and add the new e-mail instead.</p>
+        <div className="modal-foot" style={{ marginTop: 0 }}>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function AddMember({ open, onClose, existing }) {
+  const toast = useToast();
+  const [f, setF] = useState({ name: '', email: '', role: 'staff', create: true, password: '' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (open) {
+      setF({ name: '', email: '', role: 'staff', create: true, password: '' });
+      setError('');
+    }
+  }, [open]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const email = emailKey(f.email);
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return setError('Enter a valid e-mail.');
+    if (existing.includes(email)) return setError('This e-mail is already in the team.');
+    if (f.create && f.password.length < 6) return setError('Password must be at least 6 characters.');
+    setBusy(true);
+    try {
+      let note = '';
+      if (f.create) note = (await createLogin(email, f.password)) === 'exists' ? ' (login already existed - they keep their password)' : ' with a new login';
+      await saveMember({ email, name: f.name, role: f.role, active: true });
+      toast(`${f.name || email} added${note}`);
+      onClose();
+    } catch (err) {
+      setError(err.code === 'auth/weak-password' ? 'Password is too weak.' : err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Add team member">
+      <form onSubmit={submit} className="stack">
+        <div className="form-grid">
+          <Field label="Name"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
+          <Field label="E-mail" required><input className="input" type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
+        </div>
+        <Field label="Role">
+          <Segmented label="Role" value={f.role} onChange={(v) => setF({ ...f, role: v })} options={[{ value: 'staff', label: 'Staff' }, { value: 'owner', label: 'Owner' }]} />
+        </Field>
+        <Toggle checked={f.create} onChange={(e) => setF({ ...f, create: e.target.checked })} label="Create their sign-in now (set a password)" />
+        {f.create && (
+          <Field label="Password" hint="Share it with them; they can change it in Settings → Account.">
+            <input className="input" type="text" autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} />
+          </Field>
+        )}
+        {error && <div className="form-error">{error}</div>}
+        <div className="modal-foot" style={{ marginTop: 0 }}>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy}>{busy ? 'Adding…' : 'Add member'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ------------------------------------------------------------------ data & backup (owner only) */
+
+const DATA_SETS = [
+  ['sales', 'Bills'], ['purchases', 'Purchases'], ['returns', 'Returns'], ['devices', 'Devices'], ['payments', 'Payments'], ['expenses', 'Expenses'],
+  ['parties', 'Parties'], ['repairs', 'Repairs'], ['banks', 'Bank accounts'], ['audits', 'Stock audits'], ['team', 'Team'],
+];
+
+function DataTab() {
+  const { raw, settings } = useData();
+  const toast = useToast();
+  const [images, setImages] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const rows = DATA_SETS.map(([k, label]) => ({ k, label, n: raw[k]?.length || 0, kb: Math.round(JSON.stringify(raw[k] || []).length / 1024) }));
+  const total = rows.reduce((s, r) => s + r.n, 0);
+  const kb = rows.reduce((s, r) => s + r.kb, 0);
+  const level = total < 5000 ? ['success', 'Healthy'] : total < 20000 ? ['caution', 'Getting large'] : ['urgent', 'Plan an archive'];
+
+  const backup = async () => {
+    setBusy(true);
+    try {
+      const plainify = (v) =>
+        v && typeof v.toDate === 'function'
+          ? v.toDate().toISOString()
+          : Array.isArray(v)
+            ? v.map(plainify)
+            : v && typeof v === 'object'
+              ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, plainify(x)]))
+              : v;
+      const out = { app: 'IBELL MOBILE', exportedAt: new Date().toISOString(), settings: plainify(settings), collections: {} };
+      for (const [k] of DATA_SETS) out.collections[k] = plainify(raw[k] || []);
+      if (images) {
+        const snap = await getDocs(collection(db, 'attachments'));
+        out.collections.attachments = snap.docs.map((d) => plainify({ id: d.id, ...d.data() }));
+      }
+      const blob = new Blob([JSON.stringify(out, null, 1)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `ibell-backup-${today()}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      toast('Backup downloaded');
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="stack">
+      <Section title="Records" desc="Everything is kept live on every signed-in device, and cached on the device so it keeps working offline.">
+        <div className="row" style={{ gap: 12, marginBottom: 12 }}>
+          <span className={`chip ${level[0]}`}>{level[1]}</span>
+          <span className="small muted">{total.toLocaleString('en-IN')} records · about {kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb} KB`} (ID proof images are stored separately)</span>
+        </div>
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr><th>Data</th><th className="num">Records</th><th className="num">Size</th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.k}><td>{r.label}</td><td className="num">{r.n.toLocaleString('en-IN')}</td><td className="num">{r.kb} KB</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+      <Section title="How big can it get?">
+        <div className="small stack-sm" style={{ lineHeight: 1.6 }}>
+          <div><b>Up to ~5,000 records</b> (a busy shop's first 1–2 years): instant on every device.</div>
+          <div><b>5,000 – 20,000:</b> still fine; the first sign-in on a new device takes a few seconds longer. After that only changes are downloaded.</div>
+          <div><b>Over 20,000:</b> time for a year-end archive (closing old years into opening balances). Ask your developer before you get there - the status above turns red.</div>
+        </div>
+      </Section>
+      <Section title="Full backup" desc="Downloads every record as one file you can keep on a pen drive or Google Drive. Do it once a month.">
+        <div className="row" style={{ gap: 16 }}>
+          <Toggle checked={images} onChange={(e) => setImages(e.target.checked)} label="Include ID proof images (bigger file)" />
+          <button type="button" className="btn btn-primary" onClick={backup} disabled={busy}>
+            <Download size={16} /> {busy ? 'Preparing…' : 'Download backup'}
+          </button>
+        </div>
       </Section>
     </div>
   );

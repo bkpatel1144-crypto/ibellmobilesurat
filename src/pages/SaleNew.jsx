@@ -10,12 +10,14 @@ import PaymentFields from '../components/PaymentFields';
 import { IdProofEditor } from '../components/IdProof';
 import { createSale, CASH_ACCOUNT } from '../lib/db';
 import { money, num, round2, today, cleanImei, deviceName } from '../lib/format';
+import { gstApplies, billTotals, splitGst, validGstin, stateOf, stateName } from '../lib/gst';
 
 let seq = 0;
 
 export default function SaleNew() {
   const data = useData();
   const { devices, settings, privacy } = data;
+  const canProfit = data.can('viewProfit');
   const toast = useToast();
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -31,7 +33,8 @@ export default function SaleNew() {
       date: today(),
       items: d ? [lineFor(d, settings)] : [],
       discount: '',
-      taxPercent: settings.defaultTax || '',
+      taxPercent: null, // null = automatic from the GST settings and payment mode
+      customerGstin: '',
       received: '',
       mode: 'Cash',
       accountId: CASH_ACCOUNT,
@@ -86,10 +89,13 @@ export default function SaleNew() {
     else if (matches.length === 1) addDevice(matches[0]);
   };
 
+  // GST: automatic from Settings → Billing (e.g. only on bank payments), can be changed per bill
+  const autoRate = gstApplies(settings, f.mode) ? num(settings.gstRate) : 0;
+  const rate = f.taxPercent === null ? autoRate : num(f.taxPercent);
+  const inclusive = settings.gstInclusive !== false;
   const subtotal = round2(f.items.reduce((s, it) => s + num(it.price), 0));
-  const taxable = round2(subtotal - num(f.discount));
-  const tax = round2((taxable * num(f.taxPercent)) / 100);
-  const total = round2(taxable + tax);
+  const { taxable, tax, total } = billTotals({ subtotal, discount: f.discount, rate, inclusive });
+  const split = splitGst(tax, settings.gstin, f.customerGstin);
   const balance = round2(total - num(f.received));
   const cost = f.items.reduce((s, it) => {
     const d = devMap.get(it.deviceId);
@@ -116,7 +122,7 @@ export default function SaleNew() {
     if (errs.length) return;
     setBusy(print ? 'print' : 'save');
     try {
-      const { id, invoiceNo, sale } = await createSale({ ...f, hidden }, { settings, sales: data.raw.sales, devices: data.raw.devices });
+      const { id, invoiceNo, sale } = await createSale({ ...f, taxPercent: rate, hidden }, { settings, sales: data.raw.sales, devices: data.raw.devices });
       toast(`Bill ${invoiceNo} saved`);
       if (print) {
         const { invoicePdf } = await import('../lib/export');
@@ -177,6 +183,7 @@ export default function SaleNew() {
                     customerName: p?.name || '',
                     customerPhone: p?.phone || '',
                     customerAddress: p?.address || '',
+                    customerGstin: p?.gstin || '',
                   }))
                 }
               />
@@ -193,6 +200,20 @@ export default function SaleNew() {
             <Field label="Address">
               <input className="input" value={f.customerAddress} onChange={(e) => setF({ ...f, customerAddress: e.target.value })} />
             </Field>
+            {settings.gstEnabled && (
+              <Field
+                label="Customer GSTIN (business buyer)"
+                hint={
+                  f.customerGstin
+                    ? validGstin(f.customerGstin)
+                      ? `${stateName(stateOf(f.customerGstin))} · ${split.inter ? 'IGST (other state)' : 'CGST + SGST'}`
+                      : 'Check the GSTIN - 15 characters'
+                    : 'Optional'
+                }
+              >
+                <input className="input mono" maxLength={15} value={f.customerGstin} onChange={(e) => setF({ ...f, customerGstin: e.target.value.toUpperCase() })} />
+              </Field>
+            )}
           </div>
         </section>
 
@@ -263,7 +284,7 @@ export default function SaleNew() {
                       </div>
                     </div>
                     <div className="form-grid">
-                      <Field label="Selling price (₹)" required hint={`Cost ${money(c)}${num(it.price) ? ` · margin ${money(num(it.price) - c)}` : ''}`}>
+                      <Field label="Selling price (₹)" required hint={canProfit ? `Cost ${money(c)}${num(it.price) ? ` · margin ${money(num(it.price) - c)}` : ''}` : undefined}>
                         <input className="input num" type="number" min="0" step="0.01" value={it.price} onChange={(e) => setItem(i, { price: e.target.value })} autoFocus={i === f.items.length - 1} />
                       </Field>
                       <Field label="Warranty">
@@ -316,14 +337,42 @@ export default function SaleNew() {
                 <input className="input num" type="number" min="0" step="0.01" value={f.discount} onChange={(e) => setF({ ...f, discount: e.target.value })} aria-label="Discount" />
               </div>
               <div>
-                <span className="muted">GST %</span>
-                <input className="input num" type="number" min="0" step="0.01" value={f.taxPercent} onChange={(e) => setF({ ...f, taxPercent: e.target.value })} aria-label="GST percent" />
+                <span className="muted">
+                  GST %
+                  {f.taxPercent !== null && (
+                    <button type="button" className="btn btn-ghost btn-sm" style={{ height: 22, padding: '0 6px' }} onClick={() => setF({ ...f, taxPercent: null })}>
+                      auto
+                    </button>
+                  )}
+                </span>
+                <input className="input num" type="number" min="0" step="0.01" value={f.taxPercent === null ? rate : f.taxPercent} onChange={(e) => setF({ ...f, taxPercent: e.target.value })} aria-label="GST percent" />
               </div>
-              {tax > 0 && <div><span className="muted">GST amount</span><span className="num">{money(tax)}</span></div>}
+              {settings.gstEnabled && (
+                <div>
+                  {rate > 0 ? (
+                    <span className="chip solid">Tax invoice · GST {rate}% {inclusive ? 'included' : 'added'}</span>
+                  ) : (
+                    <span className="chip plain">{f.mode === 'Cash' && settings.gstOn !== 'all' ? 'Cash bill · no GST' : 'No GST'}</span>
+                  )}
+                </div>
+              )}
+              {tax > 0 && (
+                <>
+                  <div><span className="muted">Taxable value</span><span className="num">{money(taxable)}</span></div>
+                  {split.inter ? (
+                    <div><span className="muted">IGST {rate}%</span><span className="num">{money(split.igst)}</span></div>
+                  ) : (
+                    <>
+                      <div><span className="muted">CGST {rate / 2}%</span><span className="num">{money(split.cgst)}</span></div>
+                      <div><span className="muted">SGST {rate / 2}%</span><span className="num">{money(split.sgst)}</span></div>
+                    </>
+                  )}
+                </>
+              )}
               <div className="grand"><span>Total</span><span className="num">{money(total)}</span></div>
               <div><span className="muted">Received</span><span className="num">{money(num(f.received))}</span></div>
               <div><span className="muted">Balance due</span><b className="num">{money(Math.max(balance, 0))}</b></div>
-              {privacy.unlocked && f.items.length > 0 && (
+              {canProfit && privacy.unlocked && f.items.length > 0 && (
                 <div><span className="muted">Profit</span><span className="num">{money(taxable - cost)}</span></div>
               )}
             </div>

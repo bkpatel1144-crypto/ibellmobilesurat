@@ -86,7 +86,8 @@ export default function PartySelect({ value, onChange, placeholder = 'Search par
             className="input"
             value={shown}
             placeholder={open ? placeholder : allowEmpty ? emptyLabel : placeholder}
-            onFocus={openList}
+            // opens on tap/typing/arrows - not on focus, so a modal that focuses it first
+            // doesn't drop the list over the fields below
             onClick={openList}
             onBlur={() => (blurTimer.current = setTimeout(() => setOpen(false), 150))}
             onChange={(e) => {

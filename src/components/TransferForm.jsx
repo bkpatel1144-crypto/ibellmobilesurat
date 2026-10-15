@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Modal, Field } from './ui';
-import { saveTransfer, CASH_ACCOUNT } from '../lib/db';
+import { saveTransfer, updateTransfer, CASH_ACCOUNT } from '../lib/db';
 import { today, num } from '../lib/format';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 
-/** Move money between accounts, e.g. deposit cash into the bank. */
-export default function TransferForm({ open, onClose }) {
+/** Move money between accounts, e.g. deposit cash into the bank. Pass `transfer` to edit one. */
+export default function TransferForm({ open, onClose, transfer = null }) {
   const { accounts } = useData();
   const toast = useToast();
   const [f, setF] = useState(null);
@@ -16,9 +16,13 @@ export default function TransferForm({ open, onClose }) {
   useEffect(() => {
     if (open) {
       setError('');
-      setF({ fromAccountId: CASH_ACCOUNT, toAccountId: accounts.find((a) => !a.isCash)?.id || '', amount: '', date: today(), note: '' });
+      setF(
+        transfer
+          ? { fromAccountId: transfer.fromAccountId, toAccountId: transfer.toAccountId, amount: String(transfer.amount ?? ''), date: transfer.date, note: transfer.note || '' }
+          : { fromAccountId: CASH_ACCOUNT, toAccountId: accounts.find((a) => !a.isCash)?.id || '', amount: '', date: today(), note: '' },
+      );
     }
-  }, [open, accounts]);
+  }, [open, transfer]); // eslint-disable-line react-hooks/exhaustive-deps -- accounts only pick the starting value
 
   if (!open || !f) return null;
 
@@ -29,8 +33,9 @@ export default function TransferForm({ open, onClose }) {
     if (num(f.amount) <= 0) return setError('Enter an amount.');
     setBusy(true);
     try {
-      await saveTransfer(f);
-      toast('Transfer saved');
+      if (transfer) await updateTransfer(transfer.id, { ...f, amount: num(f.amount) });
+      else await saveTransfer(f);
+      toast(transfer ? 'Transfer updated' : 'Transfer saved');
       onClose();
     } catch (err) {
       setError(err.message);
@@ -41,7 +46,7 @@ export default function TransferForm({ open, onClose }) {
 
   const opts = accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>);
   return (
-    <Modal open onClose={onClose} title="Transfer between accounts" subtitle="Cash deposit, withdrawal or bank to bank">
+    <Modal open onClose={onClose} title={transfer ? 'Edit transfer' : 'Transfer between accounts'} subtitle="Cash deposit, withdrawal or bank to bank">
       <form onSubmit={submit} className="stack">
         <div className="form-grid">
           <Field label="From">
@@ -66,7 +71,7 @@ export default function TransferForm({ open, onClose }) {
         {error && <div className="form-error">{error}</div>}
         <div className="modal-foot" style={{ marginTop: 0 }}>
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Transfer'}</button>
+          <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : transfer ? 'Save changes' : 'Transfer'}</button>
         </div>
       </form>
     </Modal>

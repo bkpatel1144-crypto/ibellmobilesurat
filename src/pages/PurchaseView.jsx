@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Trash2, Wrench, History, Wallet, FileText, Barcode } from 'lucide-react';
+import { ArrowLeft, Trash2, Wrench, History, Wallet, FileText, Barcode, Pencil, Redo2 } from 'lucide-react';
 import { useLabels } from '../lib/useLabels';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
@@ -11,12 +11,14 @@ import SendRepairModal from '../components/SendRepairModal';
 import PaymentForm from '../components/PaymentForm';
 import { deletePurchase } from '../lib/db';
 import { accountName } from '../lib/ledger';
+import { returnablePurchaseLines } from '../lib/returns';
 import { money, num, round2, fmtDate, plain } from '../lib/format';
 
 export default function PurchaseView() {
   const { id } = useParams();
   const data = useData();
-  const { purchases, devices, repairs, payments, accounts, settings } = data;
+  const canDelete = useData().can('deleteRecords');
+  const { purchases, devices, repairs, payments, accounts, settings, returns } = data;
   const navigate = useNavigate();
   const toast = useToast();
   const [confirmDialog, confirm] = useConfirm();
@@ -37,7 +39,10 @@ export default function PurchaseView() {
     );
   }
 
-  const due = round2(num(p.total) - num(p.paid));
+  const due = round2(num(p.due));
+  const notes = returns.filter((x) => x.kind === 'purchase' && x.billId === p.id).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const refunds = payments.filter((x) => x.refType === 'purchaseReturn' && x.billId === p.id);
+  const canReturn = new Set(returnablePurchaseLines(p, devices).map((l) => l.deviceId));
 
   const remove = async () => {
     const ok = await confirm({
@@ -112,7 +117,22 @@ export default function PurchaseView() {
               <Barcode size={16} /> {labelBusy ? '…' : 'Labels'}
             </button>
             <button className="btn" onClick={voucher}><FileText size={16} /> PDF</button>
-            <button className="btn btn-danger" onClick={remove} aria-label="Delete purchase"><Trash2 size={16} /></button>
+            <Link className="btn" to={`/purchases/${p.id}/edit`}><Pencil size={16} /> Edit</Link>
+            {canReturn.size > 0 && (
+              <Link className="btn" to={`/returns/new?kind=purchase&bill=${p.id}`}><Redo2 size={16} /> Return to supplier</Link>
+            )}
+            {due < -0.004 && notes.length > 0 && (
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  const n = notes[notes.length - 1];
+                  setPayPreset({ direction: 'in', partyId: p.partyId, partyName: p.partyName, refType: 'purchaseReturn', refId: n.id, refNo: n.returnNo, billId: p.id, amount: -due, note: `Refund received for ${n.returnNo}` });
+                }}
+              >
+                <Wallet size={16} /> Receive refund
+              </button>
+            )}
+            {canDelete && <button className="btn btn-danger" onClick={remove} aria-label="Delete purchase"><Trash2 size={16} /></button>}
             {due > 0 && (
               <button
                 className="btn btn-primary"
@@ -132,7 +152,7 @@ export default function PurchaseView() {
           <div className="kpi"><div className="kpi-label">Party</div><div className="kpi-value" style={{ fontSize: 20 }}><Link to={`/parties/${p.partyId}`}>{p.partyName}</Link></div><div className="kpi-sub">{p.supplierBillNo ? `Bill ${p.supplierBillNo}` : 'No supplier bill no.'}</div></div>
           <div className="kpi"><div className="kpi-label">Total</div><div className="kpi-value">{money(p.total)}</div><div className="kpi-sub">{p.items.length} device(s)</div></div>
           <div className="kpi"><div className="kpi-label">Paid</div><div className="kpi-value">{money(p.paid)}</div></div>
-          <div className="kpi"><div className="kpi-label">Balance</div><div className="kpi-value">{money(due)}</div><div className="kpi-sub">{due > 0 ? 'To pay' : 'Settled'}</div></div>
+          <div className="kpi"><div className="kpi-label">Balance</div><div className="kpi-value">{money(Math.abs(due))}</div><div className="kpi-sub">{due > 0 ? 'To pay' : due < -0.004 ? 'Supplier owes you' : 'Settled'}</div></div>
         </div>
 
         <section className="card card-lg">
@@ -163,6 +183,7 @@ export default function PurchaseView() {
                     <div><dt>Repair cost</dt><dd className="num">{money(d?.repairCost)}</dd></div>
                     <div><dt>Total cost</dt><dd className="num">{money(num(it.price) + num(d?.repairCost))}</dd></div>
                     {d?.status === 'sold' && <div><dt>Sold</dt><dd><Link to={`/sales/${d.saleId}`}>{d.saleNo}</Link> · {money(d.salePrice)}</dd></div>}
+                    {d?.status === 'returned' && <div><dt>Returned</dt><dd><Link to={`/returns/${d.returnId}`}>{d.returnNo}</Link> · {fmtDate(d.returnDate)}</dd></div>}
                     {d?.notes && <div><dt>Notes</dt><dd>{d.notes}</dd></div>}
                   </dl>
                   <div className="sub-box">
@@ -189,12 +210,44 @@ export default function PurchaseView() {
                     {d?.status === 'in_stock' && (
                       <button className="btn btn-sm" onClick={() => setRepairDevice(d)}><Wrench size={15} /> Send to repair</button>
                     )}
+                    {canReturn.has(it.deviceId) && (
+                      <Link className="btn btn-sm" to={`/returns/new?kind=purchase&bill=${p.id}&device=${it.deviceId}`}><Redo2 size={15} /> Return to supplier</Link>
+                    )}
                   </div>
                 </div>
               );
             })}
           </div>
         </section>
+
+        {notes.length > 0 && (
+          <section className="card card-lg">
+            <div className="card-head">
+              <h2>Returns to supplier</h2>
+              <span className="muted small">{money(p.returned)} debited · {money(p.refunded)} refund received</span>
+            </div>
+            <table className="table">
+              <tbody>
+                {notes.map((x) => (
+                  <tr key={x.id} className="clickable" onClick={() => navigate(`/returns/${x.id}`)}>
+                    <td className="tnum">{fmtDate(x.date)}</td>
+                    <td className="cell-main">{x.returnNo}</td>
+                    <td className="small">{x.items.map((i) => `${i.brand} ${i.model}`).join(', ')}{x.reason && <div className="cell-sub">{x.reason}</div>}</td>
+                    <td className="num cell-main">{money(x.total)}</td>
+                  </tr>
+                ))}
+                {refunds.map((x) => (
+                  <tr key={x.id}>
+                    <td className="tnum">{fmtDate(x.date)}</td>
+                    <td className="muted">Refund · {x.refNo}</td>
+                    <td className="small">{x.mode} · <span className="muted">{accountName(accounts, x.accountId)}</span></td>
+                    <td className="num">{money(x.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        )}
 
         <section className="card card-lg">
           <div className="grid grid-2" style={{ alignItems: 'start' }}>
@@ -223,7 +276,17 @@ export default function PurchaseView() {
               {num(p.discount) > 0 && <div><span className="muted">Discount</span><span className="num">− {money(p.discount)}</span></div>}
               <div className="grand"><span>Total</span><span className="num">{money(p.total)}</span></div>
               <div><span className="muted">Paid</span><span className="num">{money(p.paid)}</span></div>
-              <div><b>Balance</b><b className="num">{money(due)}</b></div>
+              {num(p.returned) > 0 && (
+                <>
+                  <div><span className="muted">Returned (debit notes)</span><span className="num">− {money(p.returned)}</span></div>
+                  <div><span className="muted">Refund received</span><span className="num">{money(p.refunded)}</span></div>
+                </>
+              )}
+              {due < -0.004 ? (
+                <div><b>Supplier owes you</b><b className="num">{money(-due)}</b></div>
+              ) : (
+                <div><b>Balance</b><b className="num">{money(due)}</b></div>
+              )}
             </div>
           </div>
         </section>

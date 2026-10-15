@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Search, History, ShoppingBag, Wrench, CircleCheckBig, ShoppingCart, Smartphone, ChevronRight } from 'lucide-react';
+import { Search, History, ShoppingBag, Wrench, CircleCheckBig, ShoppingCart, Smartphone, ChevronRight, Undo2, Redo2 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, StatusChip } from '../components/ui';
@@ -10,7 +10,8 @@ import { money, num, fmtDate, cleanImei, deviceName } from '../lib/format';
 export default function Timeline() {
   const { imei: param } = useParams();
   const navigate = useNavigate();
-  const { devices, repairs, sales, purchases } = useData();
+  const { devices, repairs, sales, purchases, returns, can } = useData();
+  const canProfit = can('viewProfit');
   const [q, setQ] = useState(param || '');
 
   useEffect(() => setQ(param || ''), [param]);
@@ -87,26 +88,29 @@ export default function Timeline() {
           });
         }
       }
-      if (d.status === 'sold') {
-        const s = sales.find((x) => x.id === d.saleId);
-        const it = s?.items.find((i) => i.deviceId === d.id);
+      // every bill this phone was on (it can be sold, returned and sold again)
+      for (const s of sales.filter((x) => x.items.some((i) => i.deviceId === d.id))) {
+        const it = s.items.find((i) => i.deviceId === d.id);
+        const current = d.status === 'sold' && d.saleId === s.id;
         events.push({
-          date: d.saleDate,
+          date: s.date,
           order: 3,
           icon: ShoppingCart,
-          title: `Sold to ${d.buyerName || s?.customerName || 'customer'}`,
-          amount: d.salePrice,
-          link: `/sales/${d.saleId}`,
-          ref: d.saleNo,
+          title: `Sold to ${s.customerName || 'customer'}`,
+          amount: it.price,
+          link: `/sales/${s.id}`,
+          ref: s.invoiceNo,
           body: (
             <>
               <div className="small muted">
-                {[d.buyerPhone, it?.warranty && `Warranty: ${it.warranty}`].filter(Boolean).join(' · ')}
+                {[s.customerPhone, it.warranty && `Warranty: ${it.warranty}`].filter(Boolean).join(' · ')}
               </div>
-              <div className="small" style={{ marginTop: 4 }}>
-                Profit <b>{money(num(d.salePrice) - num(d.purchasePrice) - num(d.repairCost))}</b>
-              </div>
-              {(it?.buyerIdProofs?.length > 0 || it?.buyerIdType) && (
+              {canProfit && current && (
+                <div className="small" style={{ marginTop: 4 }}>
+                  Profit <b>{money(num(d.salePrice) - num(d.purchasePrice) - num(d.repairCost))}</b>
+                </div>
+              )}
+              {(it.buyerIdProofs?.length > 0 || it.buyerIdType) && (
                 <div style={{ marginTop: 8 }}>
                   <IdProofView ids={it.buyerIdProofs} idType={it.buyerIdType} idNumber={it.buyerIdNumber} />
                 </div>
@@ -115,10 +119,24 @@ export default function Timeline() {
           ),
         });
       }
+      for (const x of returns.filter((r) => r.items.some((i) => i.deviceId === d.id))) {
+        const it = x.items.find((i) => i.deviceId === d.id);
+        const fromCustomer = x.kind === 'sale';
+        events.push({
+          date: x.date,
+          order: fromCustomer ? 4 : 2.5,
+          icon: fromCustomer ? Undo2 : Redo2,
+          title: fromCustomer ? `Returned by ${x.partyName || 'customer'} · back in stock` : `Returned to ${x.partyName || 'supplier'}`,
+          amount: it.value,
+          link: `/returns/${x.id}`,
+          ref: x.returnNo,
+          body: <div className="small muted">{[x.reason, x.notes, `against ${x.billNo}`].filter(Boolean).join(' · ')}</div>,
+        });
+      }
     }
     events.sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.order - b.order);
     return { recs, events };
-  }, [imei, devices, repairs, sales, purchases]);
+  }, [imei, devices, repairs, sales, purchases, returns, canProfit]);
 
   const go = (e) => {
     e.preventDefault();
@@ -183,14 +201,16 @@ export default function Timeline() {
               </div>
               <dl className="dl" style={{ marginTop: 16 }}>
                 <div><dt>Times bought</dt><dd>{history.recs.length}</dd></div>
-                <div><dt>Latest cost</dt><dd className="num">{money(num(latest.purchasePrice) + num(latest.repairCost))}</dd></div>
+                {canProfit && <div><dt>Latest cost</dt><dd className="num">{money(num(latest.purchasePrice) + num(latest.repairCost))}</dd></div>}
                 <div><dt>Repair spent</dt><dd className="num">{money(history.recs.reduce((s, d) => s + num(d.repairCost), 0))}</dd></div>
-                <div>
-                  <dt>Total profit</dt>
-                  <dd className="num">
-                    {money(history.recs.filter((d) => d.status === 'sold').reduce((s, d) => s + num(d.salePrice) - num(d.purchasePrice) - num(d.repairCost), 0))}
-                  </dd>
-                </div>
+                {canProfit && (
+                  <div>
+                    <dt>Total profit</dt>
+                    <dd className="num">
+                      {money(history.recs.filter((d) => d.status === 'sold').reduce((s, d) => s + num(d.salePrice) - num(d.purchasePrice) - num(d.repairCost), 0))}
+                    </dd>
+                  </div>
+                )}
               </dl>
             </section>
 

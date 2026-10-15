@@ -1,14 +1,14 @@
 import { useCallback, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Plus, Trash2, Copy, Wrench, Save } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
-import { Field, Segmented } from '../components/ui';
+import { Field, Segmented, Empty, SkeletonPage } from '../components/ui';
 import PartySelect from '../components/PartySelect';
 import PaymentFields from '../components/PaymentFields';
 import { IdProofEditor } from '../components/IdProof';
-import { createPurchase, CASH_ACCOUNT } from '../lib/db';
+import { createPurchase, updatePurchase, CASH_ACCOUNT } from '../lib/db';
 import { money, num, round2, today, cleanImei } from '../lib/format';
 
 export const BRANDS = ['Apple', 'Samsung', 'OnePlus', 'Xiaomi', 'Redmi', 'Realme', 'Vivo', 'Oppo', 'iQOO', 'Motorola', 'Nothing', 'Google', 'Poco', 'Nokia', 'Infinix', 'Tecno', 'Lava'];
@@ -33,24 +33,78 @@ const blankItem = () => ({
   repair: { send: false, partyId: null, partyName: '', repairer: '', issue: '' },
 });
 
+/** One form for new and edit; a key per purchase so moving between them starts fresh. */
 export default function PurchaseNew() {
+  const { id } = useParams();
+  const { ready } = useData();
+  if (id && !ready) return <SkeletonPage />;
+  return <PurchaseForm key={id || 'new'} editId={id} />;
+}
+
+function PurchaseForm({ editId }) {
   const data = useData();
   const { devices, settings, purchases } = data;
   const toast = useToast();
   const navigate = useNavigate();
-  const [f, setF] = useState({
-    partyId: null,
-    partyName: '',
-    date: today(),
-    billNo: '',
-    items: [blankItem()],
-    otherCharges: '',
-    discount: '',
+  const editing = Boolean(editId);
+  const canDelete = data.can('deleteRecords');
+  const original = editing ? data.raw.purchases.find((p) => p.id === editId) : null; // what is saved
+  const shown = editing ? purchases.find((p) => p.id === editId) : null; // what this user may see
+  const rawDevices = useMemo(() => new Map(data.raw.devices.map((d) => [d.id, d])), [data.raw.devices]);
+
+  const fromPurchase = (p) => ({
+    partyId: p.partyId,
+    partyName: p.partyName,
+    date: p.date,
+    billNo: p.supplierBillNo || '',
+    items: p.items.map((line) => {
+      const d = rawDevices.get(line.deviceId) || {};
+      return {
+        ...blankItem(),
+        deviceId: line.deviceId,
+        status: d.status || 'in_stock',
+        sn: d.sn || line.sn || '',
+        imei: d.imei ?? line.imei ?? '',
+        imei2: d.imei2 ?? line.imei2 ?? '',
+        brand: d.brand ?? line.brand ?? '',
+        model: d.model ?? line.model ?? '',
+        variant: d.variant ?? line.variant ?? '',
+        color: d.color ?? line.color ?? '',
+        battery: d.battery ?? '',
+        warranty: d.warranty || '',
+        condition: d.condition || line.condition || 'Used',
+        price: String(d.purchasePrice ?? line.price ?? ''),
+        notes: d.notes || '',
+        idType: d.sellerIdType || line.idType || '',
+        idNumber: d.sellerIdNumber || line.idNumber || '',
+        idFiles: d.sellerIdProofs || line.idProofs || [],
+      };
+    }),
+    otherCharges: p.otherCharges ? String(p.otherCharges) : '',
+    discount: p.discount ? String(p.discount) : '',
     paid: '',
     mode: 'Cash',
     accountId: CASH_ACCOUNT,
-    notes: '',
+    notes: p.notes || '',
   });
+
+  const [f, setF] = useState(() =>
+    shown
+      ? fromPurchase(shown)
+      : {
+          partyId: null,
+          partyName: '',
+          date: today(),
+          billNo: '',
+          items: [blankItem()],
+          otherCharges: '',
+          discount: '',
+          paid: '',
+          mode: 'Cash',
+          accountId: CASH_ACCOUNT,
+          notes: '',
+        },
+  );
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState([]);
 
@@ -67,7 +121,9 @@ export default function PurchaseNew() {
   const validate = () => {
     const errs = [];
     if (!f.partyId) errs.push('Select the party you are buying from.');
-    const live = new Set(devices.filter((d) => d.status !== 'sold').map((d) => d.imei));
+    if (!f.items.length) errs.push('Add at least one device.');
+    const own = new Set(f.items.map((it) => it.deviceId).filter(Boolean));
+    const live = new Set(devices.filter((d) => d.status !== 'sold' && d.status !== 'returned' && !own.has(d.id)).map((d) => d.imei));
     const seen = new Set();
     f.items.forEach((it, i) => {
       const n = `Device ${i + 1}`;
@@ -89,6 +145,23 @@ export default function PurchaseNew() {
     setErrors(errs);
     if (errs.length) return;
     setBusy(true);
+    if (editing) {
+      try {
+        await updatePurchase(original, f, {
+          settings,
+          devices: data.raw.devices,
+          sales: data.raw.sales,
+          repairs: data.raw.repairs,
+          payments: data.raw.payments,
+        });
+        toast(`${shown.purchaseNo} updated`);
+        navigate(`/purchases/${editId}`);
+      } catch (err) {
+        toast(err.message, 'error');
+        setBusy(false);
+      }
+      return;
+    }
     try {
       const { id, purchaseNo, devices: saved } = await createPurchase(f, { settings, purchases: data.raw.purchases, devices: data.raw.devices });
       toast(`Purchase ${purchaseNo} saved`);
@@ -103,11 +176,24 @@ export default function PurchaseNew() {
     }
   };
 
+  if (editing && !shown) {
+    return (
+      <div className="page">
+        <PageHeader title="Edit purchase" />
+        <div className="card"><Empty title="Purchase not found" action={<Link className="btn" to="/purchases">Back to purchases</Link>} /></div>
+      </div>
+    );
+  }
+
+  // SN preview: existing phones keep theirs, new ones take the next numbers in order
+  let nextSn = Math.floor(Number(settings.snNext)) || 1;
+  const snOf = (it) => (it.deviceId ? it.sn : `${settings.snPrefix}${nextSn++}`);
+
   return (
     <form className="page" onSubmit={save}>
       <PageHeader
-        title="New Purchase"
-        subtitle="Add one or many devices in a single purchase"
+        title={editing ? `Edit ${shown.purchaseNo}` : 'New Purchase'}
+        subtitle={editing ? 'Change details, add phones, or remove phones still in stock' : 'Add one or many devices in a single purchase'}
         actions={
           <>
             <button type="button" className="btn" onClick={() => navigate(-1)}>Cancel</button>
@@ -157,9 +243,13 @@ export default function PurchaseNew() {
                   <div className="row" style={{ gap: 10 }}>
                     <span className="line-index">{i + 1}</span>
                     <b>{[it.brand, it.model].filter(Boolean).join(' ') || 'Device'}</b>
-                    <span className="chip plain mono" title="SN is given automatically when you save">
-                      SN {settings.snPrefix}{(Math.floor(Number(settings.snNext)) || 1) + i}
+                    <span className="chip plain mono" title={it.deviceId ? 'Stock number' : 'SN is given automatically when you save'}>
+                      SN {snOf(it) || '—'}
                     </span>
+                    {it.status === 'sold' && <span className="chip">Sold</span>}
+                    {it.status === 'in_repair' && <span className="chip caution">At repair</span>}
+                    {it.status === 'returned' && <span className="chip urgent">Returned</span>}
+                    {editing && !it.deviceId && <span className="chip success">New</span>}
                   </div>
                   <div className="row" style={{ gap: 4 }}>
                     <button
@@ -177,7 +267,7 @@ export default function PurchaseNew() {
                     >
                       <Copy size={15} /> Copy
                     </button>
-                    {f.items.length > 1 && (
+                    {f.items.length > 1 && (!it.deviceId || (it.status === 'in_stock' && canDelete)) && (
                       <button
                         type="button"
                         className="btn btn-ghost btn-icon btn-sm btn-danger"
@@ -192,10 +282,10 @@ export default function PurchaseNew() {
 
                 <div className="form-grid">
                   <Field label="IMEI 1 / Serial" required>
-                    <input className="input mono" value={it.imei} onChange={(e) => setItem(i, { imei: e.target.value })} inputMode="numeric" />
+                    <input className="input mono" value={it.imei} onChange={(e) => setItem(i, { imei: e.target.value })} inputMode="numeric" disabled={it.status === 'sold' || it.status === 'returned'} title={it.status === 'sold' ? 'Sold - the IMEI is on the customer bill' : it.status === 'returned' ? 'Returned to the supplier' : undefined} />
                   </Field>
                   <Field label="IMEI 2">
-                    <input className="input mono" value={it.imei2} onChange={(e) => setItem(i, { imei2: e.target.value })} inputMode="numeric" />
+                    <input className="input mono" value={it.imei2} onChange={(e) => setItem(i, { imei2: e.target.value })} inputMode="numeric" disabled={it.status === 'sold' || it.status === 'returned'} />
                   </Field>
                   <Field label="Brand" required>
                     <input className="input" list="brand-list" value={it.brand} onChange={(e) => setItem(i, { brand: e.target.value })} />
@@ -236,6 +326,7 @@ export default function PurchaseNew() {
 
                 <IdProofEditor title="Seller ID proof (optional)" value={it} onChange={(v) => setItem(i, v)} />
 
+                {!it.deviceId && (
                 <div className="sub-box">
                   <label className="check">
                     <input
@@ -267,6 +358,7 @@ export default function PurchaseNew() {
                     </div>
                   )}
                 </div>
+                )}
               </div>
             ))}
           </div>
@@ -283,16 +375,27 @@ export default function PurchaseNew() {
         <section className="card card-lg">
           <div className="grid grid-2" style={{ alignItems: 'start' }}>
             <div className="stack">
-              <h2 style={{ fontSize: 16 }}>Payment</h2>
-              <div className="form-grid">
-                <PaymentFields mode={f.mode} accountId={f.accountId} onChange={setPay} />
-                <Field label="Paid now (₹)">
-                  <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
-                    <input className="input num" type="number" min="0" step="0.01" value={f.paid} onChange={(e) => setF({ ...f, paid: e.target.value })} />
-                    <button type="button" className="btn btn-sm" onClick={() => setF({ ...f, paid: String(total) })}>Full</button>
+              {editing ? (
+                <>
+                  <h2 style={{ fontSize: 16 }}>Payments</h2>
+                  <p className="small muted" style={{ margin: 0 }}>
+                    Paid so far: <b>{money(shown.paid)}</b>. Record or change payments on the purchase page or in Payments.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h2 style={{ fontSize: 16 }}>Payment</h2>
+                  <div className="form-grid">
+                    <PaymentFields mode={f.mode} accountId={f.accountId} onChange={setPay} />
+                    <Field label="Paid now (₹)">
+                      <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
+                        <input className="input num" type="number" min="0" step="0.01" value={f.paid} onChange={(e) => setF({ ...f, paid: e.target.value })} />
+                        <button type="button" className="btn btn-sm" onClick={() => setF({ ...f, paid: String(total) })}>Full</button>
+                      </div>
+                    </Field>
                   </div>
-                </Field>
-              </div>
+                </>
+              )}
               <Field label="Notes">
                 <textarea className="textarea" rows={2} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} />
               </Field>
@@ -314,14 +417,18 @@ export default function PurchaseNew() {
                 <span>Total</span>
                 <span className="num">{money(total)}</span>
               </div>
-              <div>
-                <span className="muted">Paid</span>
-                <span className="num">{money(num(f.paid))}</span>
-              </div>
-              <div>
-                <span className="muted">{due >= 0 ? 'Balance to pay' : 'Paid extra'}</span>
-                <b className="num">{money(Math.abs(due))}</b>
-              </div>
+              {!editing && (
+                <>
+                  <div>
+                    <span className="muted">Paid</span>
+                    <span className="num">{money(num(f.paid))}</span>
+                  </div>
+                  <div>
+                    <span className="muted">{due >= 0 ? 'Balance to pay' : 'Paid extra'}</span>
+                    <b className="num">{money(Math.abs(due))}</b>
+                  </div>
+                </>
+              )}
             </div>
           </div>
           {errors.length > 0 && (
@@ -331,7 +438,7 @@ export default function PurchaseNew() {
           )}
           <div className="row" style={{ justifyContent: 'flex-end', marginTop: 20 }}>
             <button className="btn btn-primary" disabled={busy}>
-              <Save size={16} /> {busy ? 'Saving…' : 'Save purchase'}
+              <Save size={16} /> {busy ? 'Saving…' : editing ? 'Save changes' : 'Save purchase'}
             </button>
           </div>
         </section>

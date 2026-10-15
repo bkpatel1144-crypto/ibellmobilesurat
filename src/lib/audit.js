@@ -41,10 +41,10 @@ export function auditResult(audit, devices, rawDevices = devices) {
       code: s.code,
       at: s.at,
       by: s.by || '',
-      kind: !d ? 'unknown' : d.status === 'sold' ? 'sold' : d.status === 'in_repair' ? 'in_repair' : 'new',
+      kind: !d ? 'unknown' : d.status === 'sold' ? 'sold' : d.status === 'in_repair' ? 'in_repair' : d.status === 'returned' ? 'returned' : 'new',
       name: d ? deviceName(d) : '',
       sn: d?.sn || '',
-      ref: d?.status === 'sold' ? d.saleNo || '' : '',
+      ref: d?.status === 'sold' ? d.saleNo || '' : d?.status === 'returned' ? d.returnNo || '' : '',
     });
   }
 
@@ -70,6 +70,7 @@ export function auditResult(audit, devices, rawDevices = devices) {
 export const EXTRA_LABEL = {
   sold: 'Already sold',
   in_repair: 'Marked at repair',
+  returned: 'Returned to supplier',
   new: 'Bought after audit started',
   unknown: 'Not in system',
 };

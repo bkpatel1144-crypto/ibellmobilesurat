@@ -3,11 +3,13 @@ import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { round2, num } from '../lib/format';
 import { sha256 } from '../lib/files';
-import { savePasskeyHash, deleteAudit } from '../lib/db';
+import { savePasskeyHash, deleteAudit, logActivity } from '../lib/db';
 import { accountList } from '../lib/ledger';
 import { isExpired } from '../lib/audit';
+import { useAuth } from './AuthContext';
+import { saveMember, emailKey, STAFF_DEFAULTS } from '../lib/team';
 
-const COLLECTIONS = ['parties', 'devices', 'purchases', 'sales', 'repairs', 'payments', 'expenses', 'banks', 'audits'];
+const COLLECTIONS = ['parties', 'devices', 'purchases', 'sales', 'returns', 'repairs', 'payments', 'expenses', 'banks', 'audits', 'team'];
 
 export const DEFAULT_SETTINGS = {
   shopName: 'IBELL MOBILE',
@@ -20,7 +22,16 @@ export const DEFAULT_SETTINGS = {
   invoicePrefix: 'INV-',
   cashInvoicePrefix: 'CS-',
   purchasePrefix: 'PUR-',
+  saleReturnPrefix: 'CN-', // credit note (sales return)
+  cashReturnPrefix: 'CR-', // private sales returns
+  purchaseReturnPrefix: 'DN-', // debit note (purchase return)
   defaultTax: 0,
+  gstEnabled: false,
+  gstRate: 18,
+  gstOn: 'bank', // 'bank' = only bills paid by UPI / card / bank / cheque · 'all' = every bill
+  gstInclusive: true, // selling price already includes GST
+  hsnDefault: '8517',
+  staffPerms: { deleteRecords: false, viewProfit: false, reports: false, banks: true, editSettings: false }, // see lib/team.js
   defaultWarranty: '',
   invoiceTerms:
     '1. Goods once sold will not be taken back.\n2. Warranty as per manufacturer / shop policy.\n3. Used devices are sold in as-is condition after inspection by the customer.',
@@ -115,11 +126,45 @@ export function DataProvider({ children }) {
     setUnlocked(true);
   }, []);
 
+  // ---- who am I: role + permissions (also enforced by firestore.rules)
+  const { user } = useAuth();
+  const myEmail = emailKey(user?.email);
+  const meDoc = raw.team.find((m) => m.id === myEmail);
+  const teamLoaded = loaded.has('team');
+  // No team yet: the first person in is the owner (the rules only let OWNERS in at that point).
+  const role = meDoc?.role || (teamLoaded && raw.team.length === 0 ? 'owner' : 'staff');
+  const bootstrapped = useRef(false);
+  useEffect(() => {
+    if (!teamLoaded || bootstrapped.current || !user || raw.team.length) return;
+    bootstrapped.current = true;
+    saveMember({ email: user.email, name: user.displayName || user.email.split('@')[0], role: 'owner', active: true }).catch(() => {});
+  }, [teamLoaded, raw.team.length, user]);
+  const perms = useMemo(() => {
+    if (role === 'owner') return Object.fromEntries(Object.keys(STAFF_DEFAULTS).map((k) => [k, true]));
+    return { ...STAFF_DEFAULTS, ...(settings.staffPerms || {}) };
+  }, [role, settings.staffPerms]);
+  const can = useCallback((p) => Boolean(perms[p]), [perms]);
+
+  // one "signed in" entry per browser session
+  useEffect(() => {
+    if (!user || !teamLoaded) return;
+    const key = `ibell-login-${user.uid}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+    } catch {
+      /* storage blocked - log anyway */
+    }
+    logActivity({ action: 'login', entity: 'session', note: navigator.userAgent.includes('Mobile') ? 'Phone' : 'Computer' });
+  }, [user, teamLoaded]);
+
   const value = {
     ...data,
     raw,
     settings,
     accounts,
+    me: { email: myEmail, name: meDoc?.name || user?.displayName || myEmail.split('@')[0], role, isOwner: role === 'owner' },
+    can,
     ready: loaded.size === COLLECTIONS.length && settingsDoc !== null,
     error,
     privacy: {
@@ -138,16 +183,36 @@ export function DataProvider({ children }) {
 export const useData = () => useContext(DataContext);
 
 /** "paid" on purchases and "received" on sales always come from the linked payments,
- *  so a payment recorded later (Payments page) settles the bill automatically. */
+ *  so a payment recorded later (Payments page) settles the bill automatically.
+ *  Returns (credit / debit notes) and their refunds settle the bill too:
+ *    due = total − returned − (received − refunded) */
 function withSettlement(d) {
   const paid = new Map();
+  const refunded = new Map();
+  const add = (m, k, v) => m.set(k, (m.get(k) || 0) + num(v));
   for (const p of d.payments) {
-    if (p.refId && (p.refType === 'purchase' || p.refType === 'sale')) paid.set(p.refId, (paid.get(p.refId) || 0) + num(p.amount));
+    if (p.refId && (p.refType === 'purchase' || p.refType === 'sale')) add(paid, p.refId, p.amount);
+    else if (p.billId && (p.refType === 'saleReturn' || p.refType === 'purchaseReturn')) add(refunded, p.billId, p.amount);
   }
+  const returned = new Map();
+  const returnCount = new Map();
+  for (const x of d.returns) {
+    add(returned, x.billId, x.total);
+    add(returnCount, x.billId, x.items?.length || 0);
+  }
+  const extra = (id) => ({ returned: round2(returned.get(id) || 0), refunded: round2(refunded.get(id) || 0), returnedCount: returnCount.get(id) || 0 });
   return {
     ...d,
-    purchases: d.purchases.map((p) => ({ ...p, paid: round2(Math.min(paid.get(p.id) || 0, Math.max(num(p.total), 0))) })),
-    sales: d.sales.map((s) => ({ ...s, received: round2(paid.get(s.id) || 0) })),
+    purchases: d.purchases.map((p) => {
+      const x = extra(p.id);
+      const pd = round2(Math.min(paid.get(p.id) || 0, Math.max(num(p.total), 0)));
+      return { ...p, ...x, paid: pd, due: round2(num(p.total) - x.returned - pd + x.refunded) };
+    }),
+    sales: d.sales.map((s) => {
+      const x = extra(s.id);
+      const rc = round2(paid.get(s.id) || 0);
+      return { ...s, ...x, received: rc, due: round2(num(s.total) - x.returned - rc + x.refunded) };
+    }),
   };
 }
 
@@ -207,6 +272,9 @@ function applyPrivacy(raw) {
       .filter((d) => !d.hidden)
       .map((d) => (purchaseNo.has(d.purchaseId) ? { ...d, purchaseNo: purchaseNo.get(d.purchaseId) } : d)),
     sales: raw.sales.filter((s) => !s.hidden),
+    returns: raw.returns
+      .filter((x) => !x.hidden)
+      .map((x) => (x.kind === 'purchase' && purchaseNo.has(x.billId) ? { ...x, billNo: purchaseNo.get(x.billId) } : x)),
     purchases: purchases.map((p) => ({ ...p, purchaseNo: purchaseNo.get(p.id) })),
     repairs: raw.repairs.filter((r) => !hiddenRepairs.has(r.id)),
     payments: payments.map((p) => (p.refType === 'purchase' && purchaseNo.has(p.refId) ? { ...p, refNo: purchaseNo.get(p.refId) } : p)),

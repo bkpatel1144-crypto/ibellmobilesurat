@@ -1,4 +1,5 @@
 import { moneyPdf, plain, fmtDate, amountInWords, num } from './format';
+import { stateName } from './gst';
 
 const SHOP_DEFAULT = 'IBELL MOBILE';
 
@@ -231,7 +232,14 @@ export async function invoicePdf(sale, settings, { action = 'download' } = {}) {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   let by = y + 10.5;
-  for (const l of [sale.customerPhone && `Ph: ${sale.customerPhone}`, sale.customerAddress].filter(Boolean)) {
+  const taxInvoice = num(sale.tax) > 0;
+  const custLines = [
+    sale.customerPhone && `Ph: ${sale.customerPhone}`,
+    sale.customerAddress,
+    taxInvoice && sale.customerGstin && `GSTIN: ${sale.customerGstin}`,
+    taxInvoice && sale.placeOfSupply && `Place of supply: ${sale.placeOfSupply}-${stateName(sale.placeOfSupply)}`,
+  ];
+  for (const l of custLines.filter(Boolean)) {
     const w = doc.splitTextToSize(l, W / 2);
     doc.text(w, M, by);
     by += w.length * 4.3;
@@ -245,19 +253,27 @@ export async function invoicePdf(sale, settings, { action = 'download' } = {}) {
   doc.text(sale.mode || 'Cash', W - M, y + 5.5, { align: 'right' });
   y = Math.max(by, y + 12) + 3;
 
+  // customer copy: no internal details (condition, stock SN)
+  const device = (it) => [it.brand, it.model, it.variant, it.color].filter(Boolean).join(' ');
+  const imeis = (it) => [it.imei, it.imei2].filter(Boolean).join('\n');
   autoTable(doc, {
     ...tableTheme,
     startY: y,
-    // customer copy: no internal details (condition, stock SN)
-    head: [['#', 'Device', 'IMEI', 'Warranty', 'Amount']],
-    body: sale.items.map((it, i) => [
-      i + 1,
-      [it.brand, it.model, it.variant, it.color].filter(Boolean).join(' '),
-      [it.imei, it.imei2].filter(Boolean).join('\n'),
-      it.warranty || '-',
-      plain(it.price),
-    ]),
-    columnStyles: { 0: { cellWidth: 9 }, 4: { halign: 'right' } },
+    ...(taxInvoice
+      ? {
+          head: [['#', 'Device', 'HSN', 'IMEI', 'Warranty', 'Taxable value', `GST ${sale.taxPercent}%`, 'Amount']],
+          body: sale.items.map((it, i) => {
+            const taxable = it.taxable ?? it.price;
+            const gst = it.gst ?? 0;
+            return [i + 1, device(it), it.hsn || settings?.hsnDefault || '8517', imeis(it), it.warranty || '-', plain(taxable), plain(gst), plain(taxable + gst)];
+          }),
+          columnStyles: { 0: { cellWidth: 8 }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
+        }
+      : {
+          head: [['#', 'Device', 'IMEI', 'Warranty', 'Amount']],
+          body: sale.items.map((it, i) => [i + 1, device(it), imeis(it), it.warranty || '-', plain(it.price)]),
+          columnStyles: { 0: { cellWidth: 9 }, 4: { halign: 'right' } },
+        }),
   });
 
   // totals
@@ -266,9 +282,19 @@ export async function invoicePdf(sale, settings, { action = 'download' } = {}) {
     doc.addPage();
     ty = 20;
   }
-  const lines = [['Subtotal', moneyPdf(sale.subtotal)]];
-  if (num(sale.discount)) lines.push(['Discount', `- ${moneyPdf(sale.discount)}`]);
-  if (num(sale.tax)) lines.push([`GST (${sale.taxPercent}%)`, moneyPdf(sale.tax)]);
+  const lines = [];
+  if (taxInvoice) {
+    if (num(sale.discount)) lines.push(['Discount given', `- ${moneyPdf(sale.discount)}`]);
+    lines.push(['Taxable value', moneyPdf(sale.taxable ?? num(sale.total) - num(sale.tax))]);
+    if (num(sale.igst)) lines.push([`IGST @ ${sale.taxPercent}%`, moneyPdf(sale.igst)]);
+    else {
+      lines.push([`CGST @ ${num(sale.taxPercent) / 2}%`, moneyPdf(sale.cgst ?? num(sale.tax) / 2)]);
+      lines.push([`SGST @ ${num(sale.taxPercent) / 2}%`, moneyPdf(sale.sgst ?? num(sale.tax) / 2)]);
+    }
+  } else {
+    lines.push(['Subtotal', moneyPdf(sale.subtotal)]);
+    if (num(sale.discount)) lines.push(['Discount', `- ${moneyPdf(sale.discount)}`]);
+  }
   doc.setFontSize(9.5);
   for (const [k, v] of lines) {
     doc.text(k, W - 80, ty);
@@ -286,7 +312,18 @@ export async function invoicePdf(sale, settings, { action = 'download' } = {}) {
   ty += 10;
   doc.text('Received', W - 80, ty);
   doc.text(moneyPdf(sale.received), W - M, ty, { align: 'right' });
-  const due = num(sale.total) - num(sale.received);
+  if (num(sale.returned) > 0) {
+    // the bill itself never changes; returns are separate credit notes
+    ty += 5.5;
+    doc.text('Returned (credit notes)', W - 80, ty);
+    doc.text(`- ${moneyPdf(sale.returned)}`, W - M, ty, { align: 'right' });
+    if (num(sale.refunded) > 0) {
+      ty += 5.5;
+      doc.text('Refunded', W - 80, ty);
+      doc.text(moneyPdf(sale.refunded), W - M, ty, { align: 'right' });
+    }
+  }
+  const due = sale.due ?? num(sale.total) - num(sale.received);
   if (due > 0.004) {
     ty += 5.5;
     doc.setFont('helvetica', 'bold');
@@ -341,4 +378,65 @@ export async function invoicePdf(sale, settings, { action = 'download' } = {}) {
   } else {
     doc.save(`${sale.invoiceNo}.pdf`);
   }
+}
+
+/** Credit Note (sales return) / Debit Note (purchase return) - same layout as the other vouchers. */
+export async function returnNotePdf(note, settings, { refunded = 0 } = {}) {
+  const sale = note.kind === 'sale';
+  const gst = sale && num(note.tax) > 0;
+  const rate = num(note.taxPercent);
+  const rs = (v) => `Rs. ${plain(v)}`;
+  const adjusted = num(note.total) - num(refunded);
+  await exportTablePdf({
+    settings,
+    title: sale ? (gst ? 'Credit Note' : 'Sales Return') : 'Debit Note',
+    rightLines: [`No: ${note.returnNo}`, `Date: ${fmtDate(note.date)}`],
+    meta: [
+      [sale ? 'Customer' : 'Supplier', [note.partyName, note.partyPhone].filter(Boolean).join(' · ')],
+      ...(note.customerGstin ? [['GSTIN', note.customerGstin]] : []),
+      ...(gst && note.placeOfSupply ? [['Place of supply', `${note.placeOfSupply}-${stateName(note.placeOfSupply)}`]] : []),
+      [sale ? 'Against invoice' : 'Against purchase', `${note.billNo} dated ${fmtDate(note.billDate)}`],
+      ...(note.reason ? [['Reason', note.reason]] : []),
+      ...(note.notes ? [['Notes', note.notes]] : []),
+    ],
+    columns: [
+      { header: '#', key: 'n' },
+      { header: 'Device', key: 'device' },
+      { header: 'IMEI', key: 'imei' },
+      ...(gst
+        ? [
+            { header: 'HSN', key: 'hsn' },
+            { header: 'Taxable', key: 'taxable', money: true },
+            { header: `GST ${rate}%`, key: 'gst', money: true },
+          ]
+        : []),
+      { header: 'Amount', key: 'value', money: true },
+    ],
+    rows: note.items.map((i, n) => ({
+      n: n + 1,
+      device: [i.brand, i.model, i.variant, i.color].filter(Boolean).join(' '),
+      imei: [i.imei, i.imei2].filter(Boolean).join(' / '),
+      hsn: i.hsn || settings?.hsnDefault || '',
+      taxable: i.taxable,
+      gst: i.gst,
+      value: i.value,
+    })),
+    summary: [
+      ...(gst
+        ? [
+            ['Taxable value', rs(note.taxable)],
+            ...(num(note.igst) > 0
+              ? [[`IGST ${rate}%`, rs(note.igst)]]
+              : [
+                  [`CGST ${rate / 2}%`, rs(note.cgst)],
+                  [`SGST ${rate / 2}%`, rs(note.sgst)],
+                ]),
+          ]
+        : []),
+      [sale ? 'Total credit' : 'Total debit', rs(note.total)],
+      [sale ? 'Refunded' : 'Refund received', rs(refunded)],
+      ...(Math.abs(adjusted) > 0.004 ? [['Adjusted in account', rs(adjusted)]] : []),
+    ],
+    filename: note.returnNo,
+  });
 }

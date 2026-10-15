@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Wrench, Search, CircleCheckBig, Undo2, Plus, History } from 'lucide-react';
+import { Wrench, Search, CircleCheckBig, Plus, History } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
@@ -10,11 +10,15 @@ import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
 import PaymentFields from '../components/PaymentFields';
 import SendRepairModal from '../components/SendRepairModal';
-import { completeRepair, cancelRepair, CASH_ACCOUNT } from '../lib/db';
+import PartySelect from '../components/PartySelect';
+import RowActions from '../components/RowActions';
+import { completeRepair, updateRepair, deleteRepair, CASH_ACCOUNT } from '../lib/db';
 import { money, num, today, fmtDate, deviceName } from '../lib/format';
 
 export default function Repairs() {
-  const { repairs, devices, settings } = useData();
+  const data = useData();
+  const { repairs, devices, settings } = data;
+  const canDelete = data.can('deleteRecords');
   const toast = useToast();
   const [confirmDialog, confirm] = useConfirm();
   const [tab, setTab] = useState('in_repair');
@@ -22,6 +26,7 @@ export default function Repairs() {
   const [completing, setCompleting] = useState(null);
   const [picking, setPicking] = useState(false);
   const [repairDevice, setRepairDevice] = useState(null);
+  const [editing, setEditing] = useState(null);
 
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -41,16 +46,23 @@ export default function Repairs() {
   const done = repairs.filter((r) => r.status === 'done');
   const spent = done.reduce((s, r) => s + num(r.cost), 0);
 
-  const undo = async (r) => {
+  const remove = async (r) => {
+    const open = r.status !== 'done';
     const ok = await confirm({
-      title: 'Cancel this repair?',
-      message: `${r.deviceName} goes back to stock with no repair cost added.`,
-      confirmText: 'Cancel repair',
+      title: open ? 'Cancel this repair?' : 'Delete this repair?',
+      message: open
+        ? `${r.deviceName} goes back to stock with no repair cost added.`
+        : `${money(r.cost)} is taken off the cost of ${r.deviceName} and the payments for this repair are removed. This cannot be undone.`,
+      confirmText: open ? 'Cancel repair' : 'Delete',
       danger: true,
     });
     if (!ok) return;
-    await cancelRepair(r);
-    toast('Repair cancelled, device back in stock');
+    try {
+      await deleteRepair(data.raw.repairs.find((x) => x.id === r.id) || r, data.raw);
+      toast(open ? 'Repair cancelled, device back in stock' : 'Repair deleted');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
   };
 
   const exportSpec = () => ({
@@ -132,7 +144,7 @@ export default function Repairs() {
                     <th>Problem</th>
                     <th>Sent</th>
                     <th className="num">Cost</th>
-                    <th />
+                    <th className="actions">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -149,20 +161,20 @@ export default function Repairs() {
                         {r.status === 'done' && <div className="cell-sub">Done {fmtDate(r.doneDate)}</div>}
                       </td>
                       <td className="num">{r.status === 'done' ? <b>{money(r.cost)}</b> : <span className="chip caution">In repair</span>}</td>
-                      <td>
-                        <div className="row" style={{ gap: 4, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
+                      <td className="actions">
+                        <RowActions
+                          onEdit={() => setEditing(r)}
+                          onDelete={canDelete ? () => remove(r) : null}
+                          editLabel="Edit repair"
+                          deleteLabel={r.status === 'done' ? 'Delete repair' : 'Cancel repair'}
+                        >
                           {r.status === 'in_repair' && (
-                            <>
-                              <button className="btn btn-sm btn-primary" onClick={() => setCompleting(r)}>
-                                <CircleCheckBig size={14} /> Repair done
-                              </button>
-                              <button className="btn btn-sm btn-icon" onClick={() => undo(r)} aria-label="Cancel repair" title="Cancel repair">
-                                <Undo2 size={14} />
-                              </button>
-                            </>
+                            <button className="btn btn-sm btn-primary" onClick={() => setCompleting(r)}>
+                              <CircleCheckBig size={14} /> Repair done
+                            </button>
                           )}
-                          <Link className="btn btn-sm btn-icon" to={`/timeline/${r.imei}`} aria-label="IMEI timeline"><History size={14} /></Link>
-                        </div>
+                          <Link className="btn btn-sm btn-icon" to={`/timeline/${r.imei}`} aria-label="IMEI timeline" title="Timeline"><History size={14} /></Link>
+                        </RowActions>
                       </td>
                     </tr>
                   ))}
@@ -179,6 +191,7 @@ export default function Repairs() {
 
       {confirmDialog}
       <CompleteRepair repair={completing} onClose={() => setCompleting(null)} />
+      <EditRepair repair={editing} onClose={() => setEditing(null)} />
       <PickDevice
         open={picking}
         devices={devices.filter((d) => d.status === 'in_stock')}
@@ -254,6 +267,100 @@ function CompleteRepair({ repair, onClose }) {
         <div className="modal-foot" style={{ marginTop: 0 }}>
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Mark repaired'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function EditRepair({ repair, onClose }) {
+  const data = useData();
+  const toast = useToast();
+  const [f, setF] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (repair) {
+      setF({
+        partyId: repair.partyId || null,
+        partyName: repair.partyName || '',
+        repairer: repair.repairer || '',
+        issue: repair.issue || '',
+        sentDate: repair.sentDate || today(),
+        cost: String(repair.cost ?? ''),
+        doneDate: repair.doneDate || today(),
+        doneNotes: repair.doneNotes || '',
+      });
+    }
+  }, [repair]);
+
+  if (!repair || !f) return null;
+  const done = repair.status === 'done';
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (done && num(f.cost) < 0) return toast('Repair cost cannot be negative', 'error');
+    if (done && f.doneDate < f.sentDate) return toast('Received date is before the sent date', 'error');
+    setBusy(true);
+    try {
+      const raw = data.raw.repairs.find((x) => x.id === repair.id) || repair;
+      await updateRepair(raw, f, { devices: data.raw.devices, sales: data.raw.sales, payments: data.raw.payments });
+      toast('Repair updated');
+      onClose();
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Edit repair" subtitle={`${repair.deviceName} · ${repair.imei}`}>
+      <form onSubmit={submit} className="stack">
+        <Field label="Repairer (party)">
+          <PartySelect
+            value={f.partyId}
+            allowEmpty
+            emptyLabel="No party (enter name)"
+            defaultType="repairer"
+            onChange={(p) => setF((x) => ({ ...x, partyId: p?.id || null, partyName: p?.name || '' }))}
+          />
+        </Field>
+        {!f.partyId && (
+          <Field label="Repairer name">
+            <input className="input" value={f.repairer} onChange={set('repairer')} />
+          </Field>
+        )}
+        <div className="form-grid">
+          <Field label="Problem / work needed">
+            <input className="input" value={f.issue} onChange={set('issue')} />
+          </Field>
+          <Field label="Sent on">
+            <input className="input" type="date" value={f.sentDate} onChange={set('sentDate')} required />
+          </Field>
+          {done && (
+            <>
+              <Field label="Repair cost (₹)" required hint="The phone's cost moves by the difference">
+                <input className="input num" type="number" min="0" step="0.01" value={f.cost} onChange={set('cost')} required />
+              </Field>
+              <Field label="Received back on">
+                <input className="input" type="date" value={f.doneDate} onChange={set('doneDate')} required />
+              </Field>
+            </>
+          )}
+        </div>
+        {done && (
+          <>
+            <Field label="Work done / notes">
+              <input className="input" value={f.doneNotes} onChange={set('doneNotes')} />
+            </Field>
+            {f.partyId && <p className="small muted" style={{ margin: 0 }}>Money paid to the repairer is changed on the Payments page.</p>}
+          </>
+        )}
+        <div className="modal-foot" style={{ marginTop: 0 }}>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</button>
         </div>
       </form>
     </Modal>

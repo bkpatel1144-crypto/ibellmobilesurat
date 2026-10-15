@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Trash2, Printer, Download, Wallet, History, EyeOff, Eye } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Trash2, Printer, Download, Wallet, History, EyeOff, Eye, Pencil, Undo2 } from 'lucide-react';
+import SaleEditModal from '../components/SaleEditModal';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
@@ -9,17 +10,23 @@ import { IdProofView } from '../components/IdProof';
 import PaymentForm from '../components/PaymentForm';
 import { deleteSale, setSaleHidden } from '../lib/db';
 import { accountName } from '../lib/ledger';
+import { returnableSaleLines, returnOf } from '../lib/returns';
 import { money, num, round2, fmtDate, amountInWords } from '../lib/format';
 
 export default function SaleView() {
   const { id } = useParams();
   const data = useData();
-  const { sales, payments, accounts, settings, privacy } = data;
+  const canDelete = useData().can('deleteRecords');
+  const { sales, payments, accounts, settings, privacy, returns, devices } = data;
+  const canProfit = data.can('viewProfit');
   const navigate = useNavigate();
   const toast = useToast();
   const [confirmDialog, confirm] = useConfirm();
   const [payPreset, setPayPreset] = useState(null);
   const [busy, setBusy] = useState('');
+  const [params, setParams] = useSearchParams();
+  const editing = params.get('edit') === '1';
+  const setEditing = (on) => setParams(on ? { edit: '1' } : {}, { replace: true });
 
   const s = sales.find((x) => x.id === id);
   if (!s) {
@@ -32,7 +39,10 @@ export default function SaleView() {
   }
 
   const pays = payments.filter((x) => x.refType === 'sale' && x.refId === id);
-  const due = round2(num(s.total) - num(s.received));
+  const notes = returns.filter((x) => x.kind === 'sale' && x.billId === id).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const refunds = payments.filter((x) => x.refType === 'saleReturn' && x.billId === id);
+  const canReturn = new Set(returnableSaleLines(s, devices).map((l) => l.deviceId));
+  const due = round2(num(s.due));
 
   const pdf = async (action) => {
     setBusy(action);
@@ -82,7 +92,22 @@ export default function SaleView() {
           <>
             <button className="btn" onClick={() => pdf('download')} disabled={Boolean(busy)} aria-label="Download PDF"><Download size={16} /></button>
             <button className="btn" onClick={() => pdf('print')} disabled={Boolean(busy)}><Printer size={16} /> Print</button>
-            <button className="btn btn-danger" onClick={remove} aria-label="Delete bill"><Trash2 size={16} /></button>
+            <button className="btn" onClick={() => setEditing(true)}><Pencil size={16} /> Edit</button>
+            {canReturn.size > 0 && (
+              <Link className="btn" to={`/returns/new?kind=sale&bill=${s.id}`}><Undo2 size={16} /> Return</Link>
+            )}
+            {canDelete && <button className="btn btn-danger" onClick={remove} aria-label="Delete bill"><Trash2 size={16} /></button>}
+            {due < -0.004 && notes.length > 0 && (
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  const n = notes[notes.length - 1];
+                  setPayPreset({ direction: 'out', partyId: s.partyId, partyName: s.customerName, refType: 'saleReturn', refId: n.id, refNo: n.returnNo, billId: s.id, amount: -due, note: `Refund for ${n.returnNo}`, hidden: s.hidden });
+                }}
+              >
+                <Wallet size={16} /> Refund
+              </button>
+            )}
             {due > 0 && (
               <button
                 className="btn btn-primary"
@@ -110,15 +135,18 @@ export default function SaleView() {
             <div style={{ textAlign: 'right' }}>
               <div className="row" style={{ justifyContent: 'flex-end', gap: 6 }}>
                 {s.hidden && <span className="chip solid">Private</span>}
-                {due > 0 ? <span className="chip caution">Due {money(due)}</span> : <span className="chip success">Paid</span>}
+                {notes.length > 0 && <span className="chip plain">{s.returnedCount >= s.items.length ? 'Returned' : `${s.returnedCount} returned`}</span>}
+                {due > 0 ? <span className="chip caution">Due {money(due)}</span> : due < -0.004 ? <span className="chip caution">Refund owed {money(-due)}</span> : <span className="chip success">Paid</span>}
               </div>
               <div className="muted small" style={{ marginTop: 6 }}>{s.mode} · {accountName(accounts, s.accountId)}</div>
             </div>
           </div>
 
           <div className="stack">
-            {s.items.map((it, n) => (
-              <div className="line" key={it.deviceId}>
+            {s.items.map((it, n) => {
+              const back = returnOf(notes, s.id, it.deviceId);
+              return (
+              <div className={`line ${back ? 'muted-line' : ''}`} key={it.deviceId}>
                 <div className="line-head">
                   <div className="row" style={{ gap: 10 }}>
                     <span className="line-index">{n + 1}</span>
@@ -127,21 +155,30 @@ export default function SaleView() {
                       <div className="cell-sub mono">{[it.imei, it.imei2].filter(Boolean).join(' / ')}</div>
                     </div>
                   </div>
-                  <div className="cell-main num" style={{ fontSize: 18 }}>{money(it.price)}</div>
+                  <div className="row" style={{ gap: 8 }}>
+                    {back && <Link className="chip plain" to={`/returns/${back.id}`}>Returned · {back.returnNo}</Link>}
+                    <div className="cell-main num" style={{ fontSize: 18 }}>{money(it.price)}</div>
+                  </div>
                 </div>
                 <dl className="dl">
                   <div><dt>Condition</dt><dd>{it.condition}</dd></div>
                   <div><dt>Warranty</dt><dd>{it.warranty || '—'}</dd></div>
-                  <div><dt>Cost</dt><dd className="num">{money(it.cost)}</dd></div>
-                  <div><dt>Margin</dt><dd className="num">{money(num(it.price) - num(it.cost))}</dd></div>
+                  {canProfit && <div><dt>Cost</dt><dd className="num">{money(it.cost)}</dd></div>}
+                  {canProfit && <div><dt>Margin</dt><dd className="num">{money(num(it.taxable ?? it.price) - num(it.cost))}</dd></div>}
                 </dl>
                 <div className="sub-box">
                   <div className="field-label" style={{ marginBottom: 6 }}>Buyer ID proof</div>
                   <IdProofView ids={it.buyerIdProofs} idType={it.buyerIdType} idNumber={it.buyerIdNumber} />
                 </div>
-                <Link className="btn btn-sm" style={{ marginTop: 12 }} to={`/timeline/${it.imei}`}><History size={15} /> Timeline</Link>
+                <div className="row" style={{ marginTop: 12, gap: 8 }}>
+                  <Link className="btn btn-sm" to={`/timeline/${it.imei}`}><History size={15} /> Timeline</Link>
+                  {canReturn.has(it.deviceId) && (
+                    <Link className="btn btn-sm" to={`/returns/new?kind=sale&bill=${s.id}&device=${it.deviceId}`}><Undo2 size={15} /> Return this phone</Link>
+                  )}
+                </div>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="grid grid-2" style={{ marginTop: 24, alignItems: 'start' }}>
@@ -152,14 +189,65 @@ export default function SaleView() {
             <div className="totals">
               <div><span className="muted">Subtotal</span><span className="num">{money(s.subtotal)}</span></div>
               {num(s.discount) > 0 && <div><span className="muted">Discount</span><span className="num">− {money(s.discount)}</span></div>}
-              {num(s.tax) > 0 && <div><span className="muted">GST {s.taxPercent}%</span><span className="num">{money(s.tax)}</span></div>}
+              {num(s.tax) > 0 && (
+                <>
+                  <div><span className="muted">Taxable value</span><span className="num">{money(s.taxable ?? num(s.total) - num(s.tax))}</span></div>
+                  {num(s.igst) > 0 ? (
+                    <div><span className="muted">IGST {s.taxPercent}%</span><span className="num">{money(s.igst)}</span></div>
+                  ) : (
+                    <>
+                      <div><span className="muted">CGST {num(s.taxPercent) / 2}%</span><span className="num">{money(s.cgst ?? num(s.tax) / 2)}</span></div>
+                      <div><span className="muted">SGST {num(s.taxPercent) / 2}%</span><span className="num">{money(s.sgst ?? num(s.tax) / 2)}</span></div>
+                    </>
+                  )}
+                </>
+              )}
               <div className="grand"><span>Total</span><span className="num">{money(s.total)}</span></div>
               <div><span className="muted">Received</span><span className="num">{money(s.received)}</span></div>
-              <div><b>Balance due</b><b className="num">{money(Math.max(due, 0))}</b></div>
-              <div><span className="muted">Profit</span><span className="num">{money(s.profit)}</span></div>
+              {num(s.returned) > 0 && (
+                <>
+                  <div><span className="muted">Returned (credit notes)</span><span className="num">− {money(s.returned)}</span></div>
+                  <div><span className="muted">Refunded</span><span className="num">{money(s.refunded)}</span></div>
+                </>
+              )}
+              {due < -0.004 ? (
+                <div><b>Refund owed</b><b className="num">{money(-due)}</b></div>
+              ) : (
+                <div><b>Balance due</b><b className="num">{money(Math.max(due, 0))}</b></div>
+              )}
+              {canProfit && <div><span className="muted">Profit</span><span className="num">{money(s.profit)}</span></div>}
             </div>
           </div>
         </section>
+
+        {notes.length > 0 && (
+          <section className="card card-lg">
+            <div className="card-head">
+              <h2>Returns</h2>
+              <span className="muted small">{money(s.returned)} credited · {money(s.refunded)} refunded</span>
+            </div>
+            <table className="table">
+              <tbody>
+                {notes.map((x) => (
+                  <tr key={x.id} className="clickable" onClick={() => navigate(`/returns/${x.id}`)}>
+                    <td className="tnum">{fmtDate(x.date)}</td>
+                    <td className="cell-main">{x.returnNo}</td>
+                    <td className="small">{x.items.map((i) => `${i.brand} ${i.model}`).join(', ')}{x.reason && <div className="cell-sub">{x.reason}</div>}</td>
+                    <td className="num cell-main">{money(x.total)}</td>
+                  </tr>
+                ))}
+                {refunds.map((x) => (
+                  <tr key={x.id}>
+                    <td className="tnum">{fmtDate(x.date)}</td>
+                    <td className="muted">Refund · {x.refNo}</td>
+                    <td className="small">{x.mode} · <span className="muted">{accountName(accounts, x.accountId)}</span></td>
+                    <td className="num">− {money(x.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        )}
 
         <section className="card card-lg">
           <div className="card-head">
@@ -190,6 +278,7 @@ export default function SaleView() {
 
       {confirmDialog}
       <PaymentForm open={Boolean(payPreset)} preset={payPreset} onClose={() => setPayPreset(null)} />
+      <SaleEditModal sale={s} open={editing} onClose={() => setEditing(false)} />
     </div>
   );
 }

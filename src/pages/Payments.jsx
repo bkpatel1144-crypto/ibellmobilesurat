@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search, Wallet, ArrowDownLeft, ArrowUpRight, ArrowLeftRight, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Search, Wallet, ArrowDownLeft, ArrowUpRight, ArrowLeftRight } from 'lucide-react';
+import RowActions from '../components/RowActions';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
@@ -14,10 +15,11 @@ import { deletePayment } from '../lib/db';
 import { accountName } from '../lib/ledger';
 import { money, num, fmtDate, inRange, byDateDesc } from '../lib/format';
 
-const REF_LINK = { sale: '/sales/', purchase: '/purchases/' };
+const REF_LINK = { sale: '/sales/', purchase: '/purchases/', saleReturn: '/returns/', purchaseReturn: '/returns/' };
 
 export default function Payments() {
   const { payments, accounts, settings } = useData();
+  const canDelete = useData().can('deleteRecords');
   const toast = useToast();
   const [confirmDialog, confirm] = useConfirm();
   const [range, setRange] = useState(defaultRange);
@@ -26,6 +28,7 @@ export default function Payments() {
   const [q, setQ] = useState('');
   const [form, setForm] = useState(null); // { payment } | { preset }
   const [transfer, setTransfer] = useState(false);
+  const [editTransfer, setEditTransfer] = useState(null);
 
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -42,14 +45,18 @@ export default function Payments() {
 
   const remove = async (p) => {
     const ok = await confirm({
-      title: 'Delete this payment?',
+      title: p.direction === 'transfer' ? 'Delete this transfer?' : 'Delete this payment?',
       message: p.refNo ? `The bill ${p.refNo} will show this amount as unpaid again.` : 'This cannot be undone.',
       confirmText: 'Delete',
       danger: true,
     });
     if (!ok) return;
-    await deletePayment(p.id);
-    toast('Payment deleted');
+    try {
+      await deletePayment(p.id, p);
+      toast(p.direction === 'transfer' ? 'Transfer deleted' : 'Payment deleted');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
   };
 
   const label = (p) =>
@@ -149,7 +156,7 @@ export default function Payments() {
             <div className="table-wrap">
               <table className="table" {...pg.tableProps}>
                 <thead>
-                  <tr><th>Date</th><th>Party</th><th>Against</th><th>Mode · Account</th><th className="num">In</th><th className="num">Out</th><th /></tr>
+                  <tr><th>Date</th><th>Party</th><th>Against</th><th>Mode · Account</th><th className="num">In</th><th className="num">Out</th><th className="actions">Actions</th></tr>
                 </thead>
                 <tbody>
                   {pg.rows.map((p) => (
@@ -167,13 +174,13 @@ export default function Payments() {
                       <td className="small">{p.mode} · <span className="muted">{label(p)}</span></td>
                       <td className="num pos">{p.direction === 'in' ? money(p.amount) : p.direction === 'transfer' ? money(p.amount) : ''}</td>
                       <td className="num neg">{p.direction === 'out' ? money(p.amount) : ''}</td>
-                      <td>
-                        <div className="row" style={{ gap: 4, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
-                          {p.direction !== 'transfer' && (
-                            <button className="btn btn-sm btn-icon" onClick={() => setForm({ payment: p })} aria-label="Edit payment"><Pencil size={14} /></button>
-                          )}
-                          <button className="btn btn-sm btn-icon btn-danger" onClick={() => remove(p)} aria-label="Delete payment"><Trash2 size={14} /></button>
-                        </div>
+                      <td className="actions">
+                        <RowActions
+                          onEdit={() => (p.direction === 'transfer' ? setEditTransfer(p) : setForm({ payment: p }))}
+                          onDelete={canDelete ? () => remove(p) : null}
+                          editLabel={p.direction === 'transfer' ? 'Edit transfer' : 'Edit payment'}
+                          deleteLabel={p.direction === 'transfer' ? 'Delete transfer' : 'Delete payment'}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -190,6 +197,7 @@ export default function Payments() {
       {confirmDialog}
       <PaymentForm open={Boolean(form)} payment={form?.payment} preset={form?.preset} onClose={() => setForm(null)} />
       <TransferForm open={transfer} onClose={() => setTransfer(false)} />
+      <TransferForm open={Boolean(editTransfer)} transfer={editTransfer} onClose={() => setEditTransfer(null)} />
     </div>
   );
 }

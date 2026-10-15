@@ -21,7 +21,7 @@ import { partyBalances, accountBalances } from '../lib/ledger';
 
 export default function Dashboard() {
   const data = useData();
-  const { sales, purchases, devices, repairs, expenses, parties, accounts } = data;
+  const { sales, purchases, devices, repairs, expenses, parties, accounts, returns } = data;
   const navigate = useNavigate();
 
   const s = useMemo(() => {
@@ -33,6 +33,10 @@ export default function Dashboard() {
     const monthSales = sales.filter((x) => x.date >= m0);
     const monthPurch = purchases.filter((x) => x.date >= m0);
     const monthExp = expenses.filter((x) => x.date >= m0);
+    // returns count in the period they happen (like the GST credit note)
+    const monthSR = returns.filter((x) => x.kind === 'sale' && x.date >= m0);
+    const monthPR = returns.filter((x) => x.kind === 'purchase' && x.date >= m0);
+    const todaySR = returns.filter((x) => x.kind === 'sale' && x.date === t);
     const stock = devices.filter((d) => d.status === 'in_stock');
     const inRepair = devices.filter((d) => d.status === 'in_repair');
 
@@ -49,7 +53,8 @@ export default function Dashboard() {
     for (let i = 29; i >= 0; i -= 1) {
       const d = addDays(t, -i);
       const daySales = sales.filter((x) => x.date === d);
-      days.push({ label: fmtDateShort(d), fullLabel: fmtDate(d), value: sum(daySales, (x) => x.total), count: daySales.length });
+      const dayBack = returns.filter((x) => x.kind === 'sale' && x.date === d);
+      days.push({ label: fmtDateShort(d), fullLabel: fmtDate(d), value: sum(daySales, (x) => x.total) - sum(dayBack, (x) => x.total), count: daySales.length });
     }
 
     const brand = new Map();
@@ -61,18 +66,30 @@ export default function Dashboard() {
         brand.set(it.brand, b);
       }
 
-    const monthProfit = sum(monthSales, (x) => x.profit);
+    for (const x of monthSR)
+      for (const it of x.items) {
+        const b = brand.get(it.brand);
+        if (b) {
+          b.value -= num(it.value);
+          b.count -= 1;
+        }
+      }
+
+    // sales returns take their profit back; purchase returns add their gain / loss
+    const monthProfit = sum(monthSales, (x) => x.profit) - sum(monthSR, (x) => x.profit) + sum(monthPR, (x) => x.profit);
     const monthExpenses = sum(monthExp, (x) => x.amount);
 
     return {
-      todayTotal: sum(todaySales, (x) => x.total),
+      todayTotal: sum(todaySales, (x) => x.total) - sum(todaySR, (x) => x.total),
+      todayReturns: todaySR.length,
+      monthReturns: sum(monthSR, (x) => x.total),
       todayCount: todaySales.length,
-      monthTotal: sum(monthSales, (x) => x.total),
+      monthTotal: sum(monthSales, (x) => x.total) - sum(monthSR, (x) => x.total),
       monthCount: monthSales.length,
       monthProfit,
       monthExpenses,
       monthNet: monthProfit - monthExpenses,
-      monthPurchTotal: sum(monthPurch, (x) => x.total),
+      monthPurchTotal: sum(monthPurch, (x) => x.total) - sum(monthPR, (x) => x.total),
       stockCount: stock.length,
       stockValue: sum(stock, (d) => num(d.purchasePrice) + num(d.repairCost)),
       newCount: stock.filter((d) => d.condition === 'New').length,
@@ -82,6 +99,7 @@ export default function Dashboard() {
       cash,
       days,
       brands: [...brand.entries()]
+        .filter(([, v]) => v.count > 0)
         .map(([label, v]) => ({ label, value: v.value, sub: `${v.count} sold` }))
         .sort((a, b) => b.value - a.value)
         .slice(0, 6),
@@ -89,7 +107,7 @@ export default function Dashboard() {
       recentPurch: [...purchases].sort(byDateDesc).slice(0, 5),
       openRepairs: repairs.filter((r) => r.status === 'in_repair').slice(0, 5),
     };
-  }, [data, sales, purchases, devices, repairs, expenses, parties, accounts]);
+  }, [data, sales, purchases, devices, repairs, expenses, parties, accounts, returns]);
 
   return (
     <div className="page">
@@ -110,19 +128,26 @@ export default function Dashboard() {
 
       <div className="stack">
         <div className="kpis cascade">
-          <Kpi inverse icon={ShoppingCart} label="Today's sales" value={money(s.todayTotal)} sub={`${s.todayCount} bill(s)`} />
-          <Kpi icon={IndianRupee} label="This month sales" value={money(s.monthTotal)} sub={`${s.monthCount} bill(s)`} />
+          <Kpi inverse icon={ShoppingCart} label="Today's sales" value={money(s.todayTotal)} sub={`${s.todayCount} bill(s)${s.todayReturns ? ` · ${s.todayReturns} return(s)` : ''}`} />
+          <Kpi icon={IndianRupee} label="This month sales" value={money(s.monthTotal)} sub={`${s.monthCount} bill(s)${s.monthReturns ? ` · net of ${money(s.monthReturns)} returns` : ''}`} />
+          {data.can('viewProfit') && (
+            <Kpi
+              icon={TrendingUp}
+              label="Month net profit"
+              value={money(s.monthNet)}
+              sub={`Gross ${money(s.monthProfit)} − exp. ${money(s.monthExpenses)}`}
+            />
+          )}
           <Kpi
-            icon={TrendingUp}
-            label="Month net profit"
-            value={money(s.monthNet)}
-            sub={`Gross ${money(s.monthProfit)} − exp. ${money(s.monthExpenses)}`}
+            icon={Boxes}
+            label="Stock"
+            value={`${s.stockCount} ${s.stockCount === 1 ? 'device' : 'devices'}`}
+            sub={data.can('viewProfit') ? `Value ${money(s.stockValue)} · ${s.newCount} new` : `${s.newCount} new`}
           />
-          <Kpi icon={Boxes} label="Stock" value={`${s.stockCount} ${s.stockCount === 1 ? 'device' : 'devices'}`} sub={`Value ${money(s.stockValue)} · ${s.newCount} new`} />
           <Kpi icon={Wrench} label="In repair" value={s.repairCount} sub="Devices at repair" />
           <Kpi icon={ArrowDownLeft} label="To receive" value={money(s.receive)} sub="From parties" />
           <Kpi icon={ArrowUpRight} label="To pay" value={money(s.pay)} sub="To parties" />
-          <Kpi icon={Wallet} label="Cash + Bank" value={money(s.cash)} sub={`${accounts.length} account(s)`} />
+          {data.can('banks') && <Kpi icon={Wallet} label="Cash + Bank" value={money(s.cash)} sub={`${accounts.length} account(s)`} />}
         </div>
 
         <div className="grid grid-main-side">

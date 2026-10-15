@@ -1,23 +1,99 @@
 rules_version = '2';
 
-// IBELL MOBILE - Firestore security rules
+// IBELL MOBILE - Firestore security rules (database: mobilebillingnew)
 //
-// Only the staff e-mails listed below can read or write shop data.
-// Create these users in Firebase console -> Authentication -> Users -> Add user,
-// then put the same e-mails here and deploy:  firebase deploy --only firestore:rules
+// 1. OWNERS below can always sign in and do everything. Put the shop owner's login e-mail here.
+// 2. Staff are added by an owner inside the app (Settings → Team). Their role and the staff
+//    permissions (Settings → Team → Staff permissions) are checked here on every request,
+//    so a hidden button is never the only protection.
+//
+// Deploy after editing:  firebase deploy --only firestore
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isStaff() {
-      return request.auth != null
-        && request.auth.token.email in [
-          'owner@ibellmobile.com'
-          // , 'staff@ibellmobile.com'
-        ];
+    function owners() {
+      return [
+        'jenish@gmail.com'
+        // , 'second.owner@example.com'
+      ];
     }
 
-    match /{document=**} {
-      allow read, write: if isStaff();
+    function email() {
+      return request.auth.token.email.lower();
+    }
+
+    function teamDoc() {
+      return /databases/$(database)/documents/team/$(email());
+    }
+
+    function inOwnerList() {
+      return request.auth != null && email() in owners();
+    }
+
+    function isMember() {
+      return inOwnerList() || (request.auth != null && exists(teamDoc()) && get(teamDoc()).data.active == true);
+    }
+
+    function isOwner() {
+      return inOwnerList() || (isMember() && get(teamDoc()).data.role == 'owner');
+    }
+
+    // owner, or staff whose permission p is switched on in settings/shop.staffPerms
+    function can(p) {
+      return isOwner()
+        || (isMember()
+            && get(/databases/$(database)/documents/settings/shop).data.get('staffPerms', {}).get(p, false) == true);
+    }
+
+    // ---- team & personal preferences
+    match /team/{member} {
+      allow read: if isMember();
+      allow write: if isOwner();
+    }
+
+    match /prefs/{uid} {
+      allow read, write: if isMember() && request.auth.uid == uid;
+    }
+
+    // ---- settings
+    match /settings/shop {
+      allow read: if isMember();
+      // staff may only move the device SN counter forward (happens on every purchase)
+      allow create: if can('editSettings') || (isMember() && request.resource.data.keys().hasOnly(['snNext']));
+      allow update: if can('editSettings')
+        || (isMember() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['snNext']));
+      allow delete: if false;
+    }
+
+    match /settings/secure {
+      allow read: if isMember();
+      allow write: if isOwner();
+    }
+
+    match /settings/counters {
+      allow read, write: if isMember();
+    }
+
+    // ---- stock audits: anyone can clean up an expired one
+    match /audits/{id} {
+      allow read, create, update: if isMember();
+      allow delete: if can('deleteRecords') || (isMember() && resource.data.expireAt < request.time);
+    }
+
+    // ---- activity log: written by the app, never edited
+    match /activity/{id} {
+      allow read: if can('reports');
+      allow create: if isMember() && request.resource.data.by == email();
+      allow update: if false;
+      allow delete: if isOwner() || (isMember() && resource.data.expireAt < request.time);
+    }
+
+    // ---- all business data
+    match /{coll}/{id} {
+      allow read, create, update: if isMember()
+        && !(coll in ['team', 'prefs', 'settings', 'audits', 'activity']);
+      allow delete: if can('deleteRecords')
+        && !(coll in ['team', 'prefs', 'settings', 'audits', 'activity']);
     }
   }
 }

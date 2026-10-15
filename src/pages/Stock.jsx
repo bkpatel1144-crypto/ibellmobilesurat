@@ -1,20 +1,26 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Search, Boxes, Wrench, ShoppingCart, History, Pencil, Plus, Barcode } from 'lucide-react';
+import { Search, Boxes, Wrench, ShoppingCart, History, Plus, Barcode, Undo2, Redo2 } from 'lucide-react';
 import { useLabels } from '../lib/useLabels';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
-import { Empty, Segmented, StatusChip, Kpi, Modal, Field } from '../components/ui';
+import { Empty, Segmented, StatusChip, Kpi, Modal, Field, useConfirm } from '../components/ui';
+import RowActions from '../components/RowActions';
 import { ExportButtons } from '../components/Filters';
 import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
 import SendRepairModal from '../components/SendRepairModal';
-import { updateDevice } from '../lib/db';
+import { updateDevice, deleteDevice, deletePurchase } from '../lib/db';
 import { money, num, fmtDate, deviceName } from '../lib/format';
 
 export default function Stock() {
-  const { devices, settings } = useData();
+  const data = useData();
+  const { devices, settings, can } = data;
+  const canDelete = can('deleteRecords');
+  const toast = useToast();
+  const [confirmDialog, confirm] = useConfirm();
+  const showCost = can('viewProfit');
   const navigate = useNavigate();
   const [status, setStatus] = useState('in_stock');
   const [cond, setCond] = useState('all');
@@ -22,6 +28,28 @@ export default function Stock() {
   const [repairDevice, setRepairDevice] = useState(null);
   const [editing, setEditing] = useState(null);
   const [printLabelsFor, labelBusy] = useLabels();
+
+  /** Only a phone still in stock can go; the last phone of a purchase takes the purchase with it. */
+  const remove = async (d) => {
+    const purchase = data.raw.purchases.find((p) => p.id === d.purchaseId);
+    const last = !purchase || purchase.items.length <= 1;
+    const ok = await confirm({
+      title: `Delete ${deviceName(d)}?`,
+      message: last
+        ? `This is the only phone in ${purchase?.purchaseNo || 'its purchase'}, so the whole purchase, its repairs and payments are deleted too. This cannot be undone.`
+        : `The phone is removed from stock and from ${purchase.purchaseNo}, and that purchase total goes down by its price. This cannot be undone.`,
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      if (last && purchase) await deletePurchase(purchase, data.raw);
+      else await deleteDevice(d, purchase, data.raw.repairs);
+      toast('Phone deleted');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
 
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -59,7 +87,7 @@ export default function Stock() {
       { header: 'Supplier', key: 'sup' },
       { header: 'Purchased', key: 'date' },
       { header: 'Status', key: 'status' },
-      { header: 'Cost', key: 'cost', money: true },
+      ...(showCost ? [{ header: 'Cost', key: 'cost', money: true }] : []),
     ],
     rows: rows.map((d) => ({
       name: deviceName(d),
@@ -76,7 +104,7 @@ export default function Stock() {
 
   const pg = usePaged(rows, {
     resetOn: [status, cond, q],
-    sort: [(d) => deviceName(d), (d) => d.imei, (d) => d.condition, (d) => d.supplierName, (d) => num(d.purchasePrice) + num(d.repairCost), (d) => d.status, null],
+    sort: [(d) => deviceName(d), (d) => d.imei, (d) => d.condition, (d) => d.supplierName, ...(showCost ? [(d) => num(d.purchasePrice) + num(d.repairCost)] : []), (d) => d.status, null],
   });
 
   return (
@@ -92,7 +120,7 @@ export default function Stock() {
       />
       <div className="stack">
         <div className="kpis">
-          <Kpi inverse icon={Boxes} label="In stock" value={inStock.length} sub={`Value ${money(value)}`} />
+          <Kpi inverse icon={Boxes} label="In stock" value={inStock.length} sub={showCost ? `Value ${money(value)}` : 'Ready to sell'} />
           <Kpi label="New" value={inStock.filter((d) => d.condition === 'New').length} sub="In stock" />
           <Kpi label="Used" value={inStock.filter((d) => d.condition === 'Used').length} sub="In stock" />
           <Kpi icon={Wrench} label="In repair" value={devices.filter((d) => d.status === 'in_repair').length} />
@@ -111,6 +139,7 @@ export default function Stock() {
                 { value: 'in_stock', label: 'In stock' },
                 { value: 'in_repair', label: 'In repair' },
                 { value: 'sold', label: 'Sold' },
+                { value: 'returned', label: 'Returned' },
                 { value: 'all', label: 'All' },
               ]}
             />
@@ -146,9 +175,9 @@ export default function Stock() {
                     <th>IMEI</th>
                     <th>Condition</th>
                     <th>Supplier</th>
-                    <th className="num">Cost</th>
+                    {showCost && <th className="num">Cost</th>}
                     <th>Status</th>
-                    <th />
+                    <th className="actions">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -168,16 +197,24 @@ export default function Stock() {
                           <Link to={`/purchases/${d.purchaseId}`}>{d.purchaseNo}</Link> · {fmtDate(d.purchaseDate)}
                         </div>
                       </td>
-                      <td className="num">
-                        <div className="cell-main">{money(cost(d))}</div>
-                        {num(d.repairCost) > 0 && <div className="cell-sub">incl. repair {money(d.repairCost)}</div>}
-                      </td>
+                      {showCost && (
+                        <td className="num">
+                          <div className="cell-main">{money(cost(d))}</div>
+                          {num(d.repairCost) > 0 && <div className="cell-sub">incl. repair {money(d.repairCost)}</div>}
+                        </td>
+                      )}
                       <td>
                         <StatusChip status={d.status} />
                         {d.status === 'sold' && <div className="cell-sub"><Link to={`/sales/${d.saleId}`}>{d.saleNo}</Link> · {money(d.salePrice)}</div>}
+                        {d.status === 'returned' && <div className="cell-sub"><Link to={`/returns/${d.returnId}`}>{d.returnNo}</Link></div>}
                       </td>
-                      <td>
-                        <div className="row" style={{ gap: 4, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
+                      <td className="actions">
+                        <RowActions
+                          onEdit={() => setEditing(d)}
+                          onDelete={canDelete && d.status === 'in_stock' ? () => remove(d) : null}
+                          editLabel="Edit device"
+                          deleteLabel="Delete device"
+                        >
                           {d.status === 'in_stock' && (
                             <>
                               <button className="btn btn-sm btn-primary" onClick={() => navigate(`/sales/new?device=${d.id}`)} title="Sell">
@@ -188,16 +225,23 @@ export default function Stock() {
                               </button>
                             </>
                           )}
+                          {d.status === 'sold' && (
+                            <Link className="btn btn-sm btn-icon" to={`/returns/new?kind=sale&bill=${d.saleId}&device=${d.id}`} aria-label="Sales return" title="Sales return (customer brings it back)">
+                              <Undo2 size={14} />
+                            </Link>
+                          )}
+                          {d.status === 'in_stock' && (
+                            <Link className="btn btn-sm btn-icon" to={`/returns/new?kind=purchase&bill=${d.purchaseId}&device=${d.id}`} aria-label="Return to supplier" title="Return to supplier">
+                              <Redo2 size={14} />
+                            </Link>
+                          )}
                           <button className="btn btn-sm btn-icon" disabled={labelBusy} onClick={() => printLabelsFor([d])} aria-label="Print label" title="Print label">
                             <Barcode size={14} />
-                          </button>
-                          <button className="btn btn-sm btn-icon" onClick={() => setEditing(d)} aria-label="Edit device" title="Edit">
-                            <Pencil size={14} />
                           </button>
                           <Link className="btn btn-sm btn-icon" to={`/timeline/${d.imei}`} aria-label="IMEI timeline" title="Timeline">
                             <History size={14} />
                           </Link>
-                        </div>
+                        </RowActions>
                       </td>
                     </tr>
                   ))}
@@ -213,6 +257,7 @@ export default function Stock() {
       </div>
       <SendRepairModal device={repairDevice} onClose={() => setRepairDevice(null)} />
       <EditDevice device={editing} onClose={() => setEditing(null)} />
+      {confirmDialog}
     </div>
   );
 }
@@ -222,7 +267,7 @@ function EditDevice({ device, onClose }) {
   const [f, setF] = useState({});
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (device) setF({ brand: device.brand, model: device.model, variant: device.variant || '', color: device.color || '', imei2: device.imei2 || '', condition: device.condition, notes: device.notes || '', battery: device.battery ?? '', warranty: device.warranty || '' });
+    if (device) setF({ brand: device.brand, model: device.model, variant: device.variant || '', color: device.color || '', imei2: device.imei2 || '', condition: device.condition, notes: device.notes || '', battery: device.battery ?? '', warranty: device.warranty || '', hsn: device.hsn || '' });
   }, [device]);
 
   const submit = async (e) => {
@@ -238,9 +283,10 @@ function EditDevice({ device, onClose }) {
         imei2: f.imei2.trim(),
         battery: f.battery === '' || f.battery == null ? null : Math.min(100, Math.max(0, Math.round(Number(f.battery)))),
         warranty: (f.warranty || '').trim(),
+        hsn: (f.hsn || '').trim(),
         condition: f.condition,
         notes: f.notes.trim(),
-      });
+      }, device.imei);
       toast('Device updated');
       onClose();
     } catch (err) {
@@ -262,6 +308,7 @@ function EditDevice({ device, onClose }) {
           <Field label="IMEI 2"><input className="input mono" value={f.imei2 || ''} onChange={set('imei2')} /></Field>
           <Field label="Battery health (%)"><input className="input num" type="number" min="0" max="100" value={f.battery ?? ''} onChange={set('battery')} /></Field>
           <Field label="Warranty"><input className="input" placeholder="e.g. 6 Months" value={f.warranty || ''} onChange={set('warranty')} /></Field>
+          <Field label="HSN code (GST)" hint="Empty = default from Settings"><input className="input mono" value={f.hsn || ''} onChange={set('hsn')} /></Field>
           <Field label="Condition">
             <select className="select" value={f.condition || 'Used'} onChange={set('condition')}>
               <option>New</option>

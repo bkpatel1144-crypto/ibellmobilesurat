@@ -25,6 +25,7 @@ import { startAudit, addAuditScan, removeAuditScans, completeAudit, deleteAudit,
 import { auditResult, findExpected, normCode, daysLeft, EXTRA_LABEL } from '../lib/audit';
 import { beep } from '../lib/beep';
 import Pager from '../components/Pager';
+import RowActions from '../components/RowActions';
 import { usePaged } from '../lib/usePaged';
 import { fmtDate, cleanImei, deviceName, tsMillis } from '../lib/format';
 
@@ -38,11 +39,28 @@ export default function Audit() {
 /* ------------------------------------------------------------------ list + start */
 
 function AuditHome() {
-  const { audits, devices } = useData();
+  const { audits, devices, can } = useData();
   const { user } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
+  const [confirmDialog, confirm] = useConfirm();
+
+  const remove = async (a) => {
+    const ok = await confirm({
+      title: 'Delete this audit?',
+      message: 'All scans and the report will be removed. This cannot be undone.',
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteAudit(a.id, `Audit of ${fmtDate(a.date)} deleted`);
+      toast('Audit deleted');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
 
   const inStock = devices.filter((d) => d.status === 'in_stock').length;
   const open = audits.find((a) => a.status === 'in_progress');
@@ -110,7 +128,7 @@ function AuditHome() {
             <span className="muted small">Each report deletes itself {AUDIT_KEEP_DAYS} days after it is completed</span>
           </div>
           {history.length ? (
-            <HistoryTable rows={history} navigate={navigate} />
+            <HistoryTable rows={history} navigate={navigate} onDelete={can('deleteRecords') ? remove : null} />
           ) : (
             <Empty icon={ClipboardCheck} title="No audits yet">
               Start an audit, then scan the barcode label of every phone in the shop.
@@ -118,6 +136,7 @@ function AuditHome() {
           )}
         </section>
       </div>
+      {confirmDialog}
     </div>
   );
 }
@@ -126,6 +145,7 @@ function AuditHome() {
 
 function AuditSession({ id }) {
   const data = useData();
+  const canDelete = useData().can('deleteRecords');
   const { audits, devices, raw, settings } = data;
   const { user } = useAuth();
   const toast = useToast();
@@ -256,7 +276,7 @@ function AuditSession({ id }) {
       danger: true,
     });
     if (!ok) return;
-    await deleteAudit(id);
+    await deleteAudit(id, `Audit of ${fmtDate(audit.date)} deleted`);
     toast('Audit deleted');
     navigate('/audit');
   };
@@ -329,7 +349,7 @@ function AuditSession({ id }) {
         }
         actions={
           <>
-            <button className="btn btn-danger" onClick={remove} aria-label="Delete audit"><Trash2 size={16} /></button>
+            {canDelete && <button className="btn btn-danger" onClick={remove} aria-label="Delete audit"><Trash2 size={16} /></button>}
             {live ? (
               <button className="btn btn-primary" onClick={finish} disabled={busy}>
                 <Flag size={16} /> {busy ? 'Saving…' : 'Complete audit'}
@@ -429,7 +449,7 @@ function AuditSession({ id }) {
             ))}
 
           {tab === 'sold' && (
-            <AuditTable rows={result.soldDuring} note={(e) => (e.status === 'sold' ? `Sold${e.ref ? ` · ${e.ref}` : ''}` : e.status === 'in_repair' ? 'Sent to repair' : e.status)} />
+            <AuditTable rows={result.soldDuring} note={(e) => (e.status === 'sold' ? `Sold${e.ref ? ` · ${e.ref}` : ''}` : e.status === 'in_repair' ? 'Sent to repair' : e.status === 'returned' ? 'Returned to supplier' : e.status)} />
           )}
         </section>
       </div>
@@ -444,7 +464,7 @@ function ExtrasTable({ rows, live, onRemove }) {
     <div className="table-wrap">
       <table className="table" {...pg.tableProps}>
         <thead>
-          <tr><th>Scanned code</th><th>Device</th><th>Why it is extra</th>{live && <th />}</tr>
+          <tr><th>Scanned code</th><th>Device</th><th>Why it is extra</th>{live && <th className="actions">Actions</th>}</tr>
         </thead>
         <tbody>
           {pg.rows.map((x) => (
@@ -453,7 +473,7 @@ function ExtrasTable({ rows, live, onRemove }) {
               <td>{x.name || '—'}{x.sn && <div className="cell-sub">SN {x.sn}</div>}</td>
               <td><span className={`chip ${x.kind === 'unknown' ? 'urgent' : 'caution'}`}>{EXTRA_LABEL[x.kind]}{x.ref ? ` · ${x.ref}` : ''}</span></td>
               {live && (
-                <td style={{ textAlign: 'right' }}>
+                <td className="actions">
                   <button className="btn btn-sm btn-icon" onClick={() => onRemove(x)} aria-label="Remove scan"><Undo2 size={14} /></button>
                 </td>
               )}
@@ -472,7 +492,7 @@ function AuditTable({ rows, action, note }) {
     <div className="table-wrap">
       <table className="table" {...pg.tableProps}>
         <thead>
-          <tr><th>Device</th><th>SN</th><th>IMEI</th><th>Note</th>{action && <th />}</tr>
+          <tr><th>Device</th><th>SN</th><th>IMEI</th><th>Note</th>{action && <th className="actions">Actions</th>}</tr>
         </thead>
         <tbody>
           {pg.rows.map((e) => (
@@ -484,7 +504,7 @@ function AuditTable({ rows, action, note }) {
               <td className="mono small">{e.sn || '—'}</td>
               <td className="mono small">{e.imei}</td>
               <td className="small muted">{note?.(e) || ''}</td>
-              {action && <td style={{ textAlign: 'right' }}>{action(e)}</td>}
+              {action && <td className="actions">{action(e)}</td>}
             </tr>
           ))}
         </tbody>
@@ -494,7 +514,7 @@ function AuditTable({ rows, action, note }) {
   );
 }
 
-function HistoryTable({ rows, navigate }) {
+function HistoryTable({ rows, navigate, onDelete }) {
   const done = (a) => a.status === 'completed';
   const pg = usePaged(rows, {
     sort: [
@@ -521,6 +541,7 @@ function HistoryTable({ rows, navigate }) {
             <th className="num">Missing</th>
             <th className="num">Extra</th>
             <th className="num">Deletes in</th>
+            {onDelete && <th className="actions">Actions</th>}
           </tr>
         </thead>
         <tbody>
@@ -536,6 +557,11 @@ function HistoryTable({ rows, navigate }) {
                 <td className="num">{done(a) ? (a.summary?.missing ? <span className="chip urgent">{a.summary.missing}</span> : 0) : '—'}</td>
                 <td className="num">{done(a) ? a.summary?.extra : '—'}</td>
                 <td className="num muted">{left == null ? '—' : `${left} day${left === 1 ? '' : 's'}`}</td>
+                {onDelete && (
+                  <td className="actions">
+                    <RowActions onDelete={() => onDelete(a)} deleteLabel="Delete audit" />
+                  </td>
+                )}
               </tr>
             );
           })}

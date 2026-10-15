@@ -3,14 +3,38 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Plus, Search, ShoppingBag } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
-import { Empty } from '../components/ui';
+import { Empty, useConfirm } from '../components/ui';
+import RowActions from '../components/RowActions';
+import { useToast } from '../context/ToastContext';
+import { deletePurchase } from '../lib/db';
 import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
 import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
 import { money, num, fmtDate, inRange, byDateDesc, round2 } from '../lib/format';
 
 export default function Purchases() {
-  const { purchases, settings } = useData();
+  const data = useData();
+  const { purchases, settings, devices } = data;
+  const canDelete = data.can('deleteRecords');
+  const toast = useToast();
+  const [confirmDialog, confirm] = useConfirm();
+  const soldIds = useMemo(() => new Set(devices.filter((d) => d.status === 'sold' || d.status === 'returned').map((d) => d.id)), [devices]);
+
+  const remove = async (p) => {
+    const ok = await confirm({
+      title: `Delete ${p.purchaseNo}?`,
+      message: 'This removes the purchase, its devices, their repairs and payments. This cannot be undone.',
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deletePurchase(data.raw.purchases.find((x) => x.id === p.id) || p, data.raw);
+      toast(`${p.purchaseNo} deleted`);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
   const navigate = useNavigate();
   const [range, setRange] = useState(defaultRange);
   const [q, setQ] = useState('');
@@ -31,8 +55,8 @@ export default function Purchases() {
   }, [purchases, range, q]);
 
   const tot = rows.reduce(
-    (a, p) => ({ total: a.total + num(p.total), paid: a.paid + num(p.paid), devices: a.devices + p.items.length }),
-    { total: 0, paid: 0, devices: 0 },
+    (a, p) => ({ total: a.total + num(p.total), paid: a.paid + num(p.paid), due: a.due + num(p.due), devices: a.devices + p.items.length }),
+    { total: 0, paid: 0, due: 0, devices: 0 },
   );
 
   const exportSpec = () => ({
@@ -56,9 +80,9 @@ export default function Purchases() {
       devices: p.items.map((i) => `${i.brand} ${i.model} (${i.imei})`).join(', '),
       total: p.total,
       paid: p.paid,
-      due: round2(num(p.total) - num(p.paid)),
+      due: round2(num(p.due)),
     })),
-    foot: { date: 'Total', no: '', party: '', devices: `${tot.devices} devices`, total: tot.total, paid: tot.paid, due: tot.total - tot.paid },
+    foot: { date: 'Total', no: '', party: '', devices: `${tot.devices} devices`, total: tot.total, paid: tot.paid, due: tot.due },
   });
 
   const pg = usePaged(rows, {
@@ -70,7 +94,7 @@ export default function Purchases() {
       (p) => p.items.map((i) => `${i.brand} ${i.model}`).join(', '),
       (p) => num(p.total),
       (p) => num(p.paid),
-      (p) => round2(num(p.total) - num(p.paid)),
+      (p) => round2(num(p.due)),
     ],
   });
 
@@ -109,11 +133,12 @@ export default function Purchases() {
                   <th className="num">Total</th>
                   <th className="num">Paid</th>
                   <th className="num">Due</th>
+                  <th className="actions">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {pg.rows.map((p) => {
-                  const due = round2(num(p.total) - num(p.paid));
+                  const due = round2(num(p.due));
                   return (
                     <tr key={p.id} className="clickable" onClick={() => navigate(`/purchases/${p.id}`)}>
                       <td className="tnum">{fmtDate(p.date)}</td>
@@ -125,7 +150,20 @@ export default function Purchases() {
                       </td>
                       <td className="num cell-main">{money(p.total)}</td>
                       <td className="num">{money(p.paid)}</td>
-                      <td className="num">{due > 0 ? <span className="chip caution">{money(due)}</span> : <span className="chip success">Paid</span>}</td>
+                      <td className="num">
+                        <div className="row" style={{ gap: 4, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                          {p.returnedCount > 0 && <span className="chip plain" title={`${money(p.returned)} returned`}>{p.returnedCount >= p.items.length ? 'Returned' : `${p.returnedCount} returned`}</span>}
+                          {due > 0 ? <span className="chip caution">{money(due)}</span> : due < -0.004 ? <span className="chip caution">Refund due {money(-due)}</span> : <span className="chip success">Paid</span>}
+                        </div>
+                      </td>
+                      <td className="actions">
+                        <RowActions
+                          onEdit={() => navigate(`/purchases/${p.id}/edit`)}
+                          onDelete={canDelete && !p.items.some((i) => soldIds.has(i.deviceId)) ? () => remove(p) : null}
+                          editLabel={`Edit ${p.purchaseNo}`}
+                          deleteLabel={`Delete ${p.purchaseNo}`}
+                        />
+                      </td>
                     </tr>
                   );
                 })}
@@ -135,7 +173,8 @@ export default function Purchases() {
                   <td colSpan={4}>Total</td>
                   <td className="num">{money(tot.total)}</td>
                   <td className="num">{money(tot.paid)}</td>
-                  <td className="num">{money(tot.total - tot.paid)}</td>
+                  <td className="num">{money(tot.due)}</td>
+                  <td />
                 </tr>
               </tfoot>
             </table>
@@ -150,6 +189,7 @@ export default function Purchases() {
           />
         )}
       </section>
+      {confirmDialog}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Search, Receipt, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Search, Receipt } from 'lucide-react';
+import RowActions from '../components/RowActions';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
@@ -15,6 +16,7 @@ import { money, num, fmtDate, inRange, byDateDesc, today, EXPENSE_CATEGORIES } f
 
 export default function Expenses() {
   const { expenses, accounts, settings } = useData();
+  const canDelete = useData().can('deleteRecords');
   const toast = useToast();
   const [confirmDialog, confirm] = useConfirm();
   const [range, setRange] = useState(defaultRange);
@@ -43,7 +45,7 @@ export default function Expenses() {
   const remove = async (e) => {
     const ok = await confirm({ title: 'Delete this expense?', message: `${e.category} · ${money(e.amount)}`, confirmText: 'Delete', danger: true });
     if (!ok) return;
-    await deleteExpense(e.id);
+    await deleteExpense(e.id, e);
     toast('Expense deleted');
   };
 
@@ -105,7 +107,7 @@ export default function Expenses() {
               <div className="table-wrap">
                 <table className="table" {...pg.tableProps}>
                   <thead>
-                    <tr><th>Date</th><th>Category</th><th>Details</th><th>Paid from</th><th className="num">Amount</th><th /></tr>
+                    <tr><th>Date</th><th>Category</th><th>Details</th><th>Paid from</th><th className="num">Amount</th><th className="actions">Actions</th></tr>
                   </thead>
                   <tbody>
                     {pg.rows.map((e) => (
@@ -118,11 +120,8 @@ export default function Expenses() {
                         </td>
                         <td className="small">{e.mode} · <span className="muted">{accountName(accounts, e.accountId)}</span></td>
                         <td className="num cell-main">{money(e.amount)}</td>
-                        <td>
-                          <div className="row" style={{ gap: 4, flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
-                            <button className="btn btn-sm btn-icon" onClick={() => setEditing(e)} aria-label="Edit expense"><Pencil size={14} /></button>
-                            <button className="btn btn-sm btn-icon btn-danger" onClick={() => remove(e)} aria-label="Delete expense"><Trash2 size={14} /></button>
-                          </div>
+                        <td className="actions">
+                          <RowActions onEdit={() => setEditing(e)} onDelete={canDelete ? () => remove(e) : null} editLabel="Edit expense" deleteLabel="Delete expense" />
                         </td>
                       </tr>
                     ))}

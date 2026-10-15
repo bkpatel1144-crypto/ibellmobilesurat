@@ -19,6 +19,9 @@ import {
   Menu,
   LockOpen,
   ClipboardCheck,
+  BadgePercent,
+  ScrollText,
+  Undo2,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
@@ -31,7 +34,7 @@ const NAV = [
     label: 'Overview',
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-      { to: '/analysis', label: 'Analysis', icon: ChartColumn },
+      { to: '/analysis', label: 'Analysis', icon: ChartColumn, perm: 'reports' },
     ],
   },
   {
@@ -39,6 +42,7 @@ const NAV = [
     items: [
       { to: '/sales', label: 'Sales', icon: ShoppingCart },
       { to: '/purchases', label: 'Purchases', icon: ShoppingBag },
+      { to: '/returns', label: 'Returns', icon: Undo2 },
       { to: '/stock', label: 'Stock', icon: Boxes },
       { to: '/audit', label: 'Stock Audit', icon: ClipboardCheck },
       { to: '/repairs', label: 'Repairs', icon: Wrench },
@@ -49,14 +53,18 @@ const NAV = [
     label: 'Accounts',
     items: [
       { to: '/parties', label: 'Parties', icon: Users },
-      { to: '/payments', label: 'Payments', icon: Wallet },
-      { to: '/banks', label: 'Banks', icon: Landmark },
+      { to: '/payments', label: 'Payments', icon: Wallet, perm: 'banks' },
+      { to: '/banks', label: 'Banks', icon: Landmark, perm: 'banks' },
       { to: '/expenses', label: 'Expenses', icon: Receipt },
+      { to: '/gst', label: 'GST Report', icon: BadgePercent, perm: 'reports' },
     ],
   },
   {
     label: 'Shop',
-    items: [{ to: '/settings', label: 'Settings', icon: Settings }],
+    items: [
+      { to: '/activity', label: 'Activity Log', icon: ScrollText, perm: 'reports' },
+      { to: '/settings', label: 'Settings', icon: Settings },
+    ],
   },
 ];
 
@@ -65,7 +73,8 @@ export const useLayout = () => useContext(LayoutContext);
 
 export default function Layout() {
   const { user, logout } = useAuth();
-  const { settings, privacy, ready, error } = useData();
+  const { settings, privacy, ready, error, can, me } = useData();
+  const nav = NAV.map((g) => ({ ...g, items: g.items.filter((i) => !i.perm || can(i.perm)) })).filter((g) => g.items.length);
   const toast = useToast();
   const location = useLocation();
   const navigate = useNavigate();
@@ -131,7 +140,7 @@ export default function Layout() {
             {pill && (
               <span className="nav-pill" style={{ height: pill.h, transform: `translateY(${pill.y}px)`, top: 0 }} />
             )}
-            {NAV.map((group) => (
+            {nav.map((group) => (
               <div className="nav-group" key={group.label} role="group" aria-label={group.label}>
                 <div className="nav-label" aria-hidden="true">{group.label}</div>
                 {group.items.map(({ to, label, icon: Icon, end }) => (
@@ -147,8 +156,8 @@ export default function Layout() {
           <div className="sidebar-foot">
             <span className="avatar" aria-hidden="true">{(user?.displayName || user?.email || '?').charAt(0)}</span>
             <div className="sidebar-user">
-              <div style={{ fontWeight: 600 }}>{user?.displayName || user?.email?.split('@')[0] || 'Signed in'}</div>
-              <div className="muted xs">{user?.email}</div>
+              <div style={{ fontWeight: 600 }}>{me.name || 'Signed in'}</div>
+              <div className="muted xs">{me.isOwner ? 'Owner' : 'Staff'} · {user?.email}</div>
             </div>
             {privacy.unlocked && (
               <button

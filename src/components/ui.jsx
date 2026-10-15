@@ -164,6 +164,7 @@ const STATUS = {
   in_stock: ['In stock', 'success'],
   in_repair: ['In repair', 'caution'],
   sold: ['Sold', ''],
+  returned: ['Returned to supplier', 'urgent'],
   done: ['Repaired', 'success'],
 };
 

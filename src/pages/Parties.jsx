@@ -3,7 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Users, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
-import { Empty, Segmented, Kpi } from '../components/ui';
+import { Empty, Segmented, Kpi, useConfirm } from '../components/ui';
+import RowActions from '../components/RowActions';
+import { useToast } from '../context/ToastContext';
+import { deleteParty, partyInUse } from '../lib/db';
 import { ExportButtons } from '../components/Filters';
 import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
@@ -20,6 +23,21 @@ export default function Parties() {
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState('all');
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const canDelete = data.can('deleteRecords');
+  const toast = useToast();
+  const [confirmDialog, confirm] = useConfirm();
+
+  const remove = async (p) => {
+    const ok = await confirm({ title: `Delete ${p.name}?`, message: 'This cannot be undone.', confirmText: 'Delete', danger: true });
+    if (!ok) return;
+    try {
+      await deleteParty(p.id, p.name, data.raw);
+      toast('Party deleted');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
 
   const balances = useMemo(() => partyBalances(parties, data), [parties, data]);
 
@@ -120,6 +138,7 @@ export default function Parties() {
                     <th className="num">Bought from</th>
                     <th className="num">Sold to</th>
                     <th className="num">Balance</th>
+                    <th className="actions">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -139,6 +158,14 @@ export default function Parties() {
                           <div className={`cell-main ${b > 0.004 ? 'pos' : b < -0.004 ? 'neg' : ''}`}>{money(Math.abs(b))}</div>
                           <div className="cell-sub">{balanceLabel(b)}</div>
                         </td>
+                        <td className="actions">
+                          <RowActions
+                            onEdit={() => setEditing(p)}
+                            onDelete={canDelete && !partyInUse(p.id, data.raw) ? () => remove(p) : null}
+                            editLabel={`Edit ${p.name}`}
+                            deleteLabel={`Delete ${p.name}`}
+                          />
+                        </td>
                       </tr>
                     );
                   })}
@@ -153,6 +180,8 @@ export default function Parties() {
         </section>
       </div>
       <PartyForm open={adding} onClose={() => setAdding(false)} />
+      <PartyForm open={Boolean(editing)} party={editing} onClose={() => setEditing(null)} />
+      {confirmDialog}
     </div>
   );
 }

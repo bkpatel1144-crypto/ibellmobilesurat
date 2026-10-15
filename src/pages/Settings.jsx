@@ -8,6 +8,7 @@ import { PageHeader } from '../components/Layout';
 import { Field, Segmented } from '../components/ui';
 import PasskeyModal from '../components/PasskeyModal';
 import LabelPreview from '../components/LabelPreview';
+import { labelLayout, LABEL_FONT_DEFAULTS } from '../lib/labels';
 import { saveSettings, maxNumber } from '../lib/db';
 import { fileToLogo } from '../lib/files';
 import { getTheme, setTheme } from '../lib/theme';
@@ -16,9 +17,10 @@ const FIELDS = [
   'shopName', 'tagline', 'address', 'phone', 'email', 'gstin', 'logo',
   'invoicePrefix', 'cashInvoicePrefix', 'purchasePrefix', 'defaultTax', 'defaultWarranty', 'invoiceTerms', 'invoiceFooter',
   'snPrefix', 'snNext', 'labelWidth', 'labelHeight', 'labelShowBattery', 'autoPrintLabels',
+  'labelTitlePt', 'labelCodePt', 'labelInfoPt', 'labelShowWarranty',
 ];
 
-const SAMPLE_DEVICE = { brand: 'Apple', model: 'iPhone 15 Pro', variant: '256', color: 'White', imei: '355262965973925', battery: 95 };
+const SAMPLE_DEVICE = { brand: 'Apple', model: 'iPhone 15 Pro', variant: '256', color: 'White', imei: '355262965973925', battery: 95, warranty: '6 Months' };
 
 export default function Settings() {
   const { settings, privacy, raw } = useData();
@@ -51,6 +53,7 @@ export default function Settings() {
 
   // highest SN already given with the prefix being typed - the next number must be above it
   const snUsed = maxNumber(raw.devices.map((d) => d.sn), f.snPrefix || '');
+  const previewDevice = { ...SAMPLE_DEVICE, sn: `${f.snPrefix || ''}${Math.floor(Number(f.snNext)) || 1}` };
 
   const save = async (e) => {
     e.preventDefault();
@@ -67,6 +70,9 @@ export default function Settings() {
         snNext,
         labelWidth: Number(f.labelWidth) || 50,
         labelHeight: Number(f.labelHeight) || 25,
+        labelTitlePt: Number(f.labelTitlePt) || LABEL_FONT_DEFAULTS.labelTitlePt,
+        labelCodePt: Number(f.labelCodePt) || LABEL_FONT_DEFAULTS.labelCodePt,
+        labelInfoPt: Number(f.labelInfoPt) || LABEL_FONT_DEFAULTS.labelInfoPt,
       };
       // the SN counter moves on every purchase - only write it when it was edited here
       if (!snChanged) delete data.snNext;
@@ -193,6 +199,22 @@ export default function Settings() {
                     <input className="input num" type="number" min="12" max="80" value={f.labelHeight} onChange={set('labelHeight')} />
                   </Field>
                 </div>
+                <div className="field-label">Text size on label (pt)</div>
+                <div className="form-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', marginTop: -8 }}>
+                  <Field label="Model line">
+                    <input className="input num" type="number" min="5" max="24" step="0.5" value={f.labelTitlePt} onChange={set('labelTitlePt')} />
+                  </Field>
+                  <Field label="IMEI number">
+                    <input className="input num" type="number" min="5" max="24" step="0.5" value={f.labelCodePt} onChange={set('labelCodePt')} />
+                  </Field>
+                  <Field label="SN / BH / Warranty">
+                    <input className="input num" type="number" min="5" max="24" step="0.5" value={f.labelInfoPt} onChange={set('labelInfoPt')} />
+                  </Field>
+                </div>
+                <label className="check small">
+                  <input type="checkbox" checked={f.labelShowWarranty !== false} onChange={setBool('labelShowWarranty')} />
+                  Print warranty on label
+                </label>
                 <label className="check small">
                   <input type="checkbox" checked={f.labelShowBattery !== false} onChange={setBool('labelShowBattery')} />
                   Print battery health (BH) on label
@@ -204,7 +226,10 @@ export default function Settings() {
               </div>
               <div className="stack-sm" style={{ alignItems: 'flex-start' }}>
                 <span className="field-label">Preview</span>
-                <LabelPreview device={{ ...SAMPLE_DEVICE, sn: `${f.snPrefix || ''}${Math.floor(Number(f.snNext)) || 1}` }} settings={f} />
+                <LabelPreview device={previewDevice} settings={f} />
+                {labelLayout(previewDevice, f).tooTight && (
+                  <span className="chip caution">Text is too big for this label - the barcode is getting too short to scan</span>
+                )}
                 <span className="xs muted">Set your label printer's paper size to {f.labelWidth || 50} × {f.labelHeight || 25} mm.</span>
               </div>
             </div>

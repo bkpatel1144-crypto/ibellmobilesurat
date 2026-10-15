@@ -353,7 +353,7 @@ function lineFor(d, settings) {
     key: seq,
     deviceId: d.id,
     price: '',
-    warranty: d.condition === 'New' ? 'As per brand warranty' : settings.defaultWarranty || '',
+    warranty: d.warranty || (d.condition === 'New' ? 'As per brand warranty' : settings.defaultWarranty || ''),
     idType: '',
     idNumber: '',
     idFiles: [],

@@ -1,39 +1,49 @@
 import { useEffect, useRef } from 'react';
 import JsBarcode from 'jsbarcode';
-import { labelTitle, labelCode, labelSize, barcodeQuiet } from '../lib/labels';
+import { labelLayout } from '../lib/labels';
 
-/** On-screen preview of a device label at true proportions (4 px per mm). */
-export default function LabelPreview({ device, settings }) {
+const PT = 0.3528;
+
+/** On-screen preview of a device label, drawn from the same layout as the printed PDF. */
+export default function LabelPreview({ device, settings, scale = 5 }) {
   const svg = useRef();
-  const { w, h } = labelSize(settings);
-  const s = Math.min(w / 50, h / 25);
-  const k = 4; // px per mm
-  const code = labelCode(device);
+  const L = labelLayout(device, settings);
+  const k = scale; // px per mm
+  const px = (mm) => mm * k;
+  const font = (p) => p * PT * k;
 
   useEffect(() => {
-    if (svg.current && code) {
-      JsBarcode(svg.current, code, { format: 'CODE128', displayValue: false, margin: 0, width: 2, height: 60, background: 'transparent', lineColor: '#000' });
+    if (svg.current && L.code) {
+      JsBarcode(svg.current, L.code, { format: 'CODE128', displayValue: false, margin: 0, width: 2, height: 60, background: 'transparent', lineColor: '#000' });
     }
-  }, [code]);
+  }, [L.code]);
 
-  const showBattery = settings?.labelShowBattery !== false && device.battery != null && device.battery !== '';
+  const line = (top, size, extra) => ({
+    position: 'absolute',
+    top: px(top),
+    left: px(L.pad),
+    right: px(L.pad),
+    height: px(L.lineH(size)),
+    fontSize: font(size),
+    lineHeight: `${px(L.lineH(size))}px`,
+    ...extra,
+  });
+
   return (
-    <div
-      className="label-preview"
-      style={{ width: w * k, height: h * k, padding: `${1.8 * s * k}px` }}
-      aria-label="Label preview"
-    >
-      <div className="label-title" style={{ fontSize: 7 * s * 0.353 * k }}>{labelTitle(device)}</div>
+    <div className="label-preview" style={{ width: px(L.w), height: px(L.h) }} aria-label="Label preview">
+      <div className="label-line" style={line(L.titleTop, L.fTitle, { fontWeight: 700, textAlign: 'center' })}>{L.title}</div>
       <svg
         ref={svg}
-        style={{ width: (w - 2 * barcodeQuiet(w, s)) * k, height: 8.6 * s * k, margin: `0 ${(barcodeQuiet(w, s) - 1.8 * s) * k}px`, alignSelf: 'center' }}
+        style={{ position: 'absolute', top: px(L.barcodeTop), left: px(L.quiet), width: px(L.w - 2 * L.quiet), height: px(L.barcodeH) }}
         preserveAspectRatio="none"
       />
-      <div className="label-code" style={{ fontSize: 6.5 * s * 0.353 * k }}>{code}</div>
-      <div className="label-meta" style={{ fontSize: 8.5 * s * 0.353 * k }}>
-        {device.sn && <div>SN: {device.sn}</div>}
-        {showBattery && <div>BH: {device.battery}%</div>}
-      </div>
+      <div className="label-line" style={line(L.codeTop, L.fCode, { textAlign: 'center' })}>{L.code}</div>
+      {L.info.map((ln, n) => (
+        <div key={n} className="label-line" style={line(L.infoTop + n * L.lineH(L.fInfo), L.fInfo, { fontWeight: 700, display: 'flex', justifyContent: 'space-between', gap: 8 })}>
+          <span className="label-ellipsis">{ln.left}</span>
+          {ln.right && <span style={{ flex: 'none' }}>{ln.right}</span>}
+        </div>
+      ))}
     </div>
   );
 }

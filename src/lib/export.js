@@ -248,16 +248,16 @@ export async function invoicePdf(sale, settings, { action = 'download' } = {}) {
   autoTable(doc, {
     ...tableTheme,
     startY: y,
-    head: [['#', 'Device', 'IMEI / Serial', 'Condition', 'Warranty', 'Amount']],
+    // customer copy: no internal details (condition, stock SN)
+    head: [['#', 'Device', 'IMEI', 'Warranty', 'Amount']],
     body: sale.items.map((it, i) => [
       i + 1,
       [it.brand, it.model, it.variant, it.color].filter(Boolean).join(' '),
-      [it.imei, it.imei2, it.sn && `SN: ${it.sn}`].filter(Boolean).join('\n'),
-      it.condition,
+      [it.imei, it.imei2].filter(Boolean).join('\n'),
       it.warranty || '-',
       plain(it.price),
     ]),
-    columnStyles: { 0: { cellWidth: 9 }, 5: { halign: 'right' } },
+    columnStyles: { 0: { cellWidth: 9 }, 4: { halign: 'right' } },
   });
 
   // totals

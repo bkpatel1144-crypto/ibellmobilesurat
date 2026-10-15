@@ -1504,38 +1504,34 @@ table.table {
 
 /* ============ Device label preview (always printed black on white) ============ */
 .label-preview {
+  position: relative;
+  flex: none;
   background: #fff;
   color: #000;
   border-radius: 6px;
   box-shadow: 0 0 0 1px var(--color-outline-variant), var(--glass-shadow-small);
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
   font-family: Helvetica, Arial, sans-serif;
-  line-height: 1.15;
 }
 
-.label-title {
-  font-weight: 700;
-  text-align: center;
+.label-line {
   white-space: nowrap;
   overflow: hidden;
+}
+
+.label-ellipsis {
+  overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: 2px;
-}
-
-.label-code {
-  text-align: center;
-  margin-top: 2px;
-  font-variant-numeric: tabular-nums;
-}
-
-.label-meta {
-  font-weight: 700;
-  margin-top: auto;
+  min-width: 0;
 }
 
 /* ============ Timeline ============ */
+.timeline-pick {
+  align-items: center;
+  border: 1px solid var(--color-outline-variant);
+  padding: var(--space-3) var(--space-4);
+}
+
 .timeline {
   position: relative;
   padding-left: var(--space-8);

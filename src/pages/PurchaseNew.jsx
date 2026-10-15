@@ -23,6 +23,7 @@ const blankItem = () => ({
   variant: '',
   color: '',
   battery: '',
+  warranty: '',
   condition: 'Used',
   price: '',
   notes: '',
@@ -119,6 +120,9 @@ export default function PurchaseNew() {
 
       <datalist id="brand-list">{brands.map((b) => <option key={b} value={b} />)}</datalist>
       <datalist id="model-list">{models.map((m) => <option key={m} value={m} />)}</datalist>
+      <datalist id="warranty-list">
+        {['No Warranty', '7 Days Checking', '1 Month', '3 Months', '6 Months', '1 Year', 'Brand Warranty'].map((w) => <option key={w} value={w} />)}
+      </datalist>
 
       <div className="stack">
         <section className="card card-lg">
@@ -164,7 +168,7 @@ export default function PurchaseNew() {
                       title="Copy as new device (same model)"
                       onClick={() =>
                         setF((p) => {
-                          const copy = { ...blankItem(), brand: it.brand, model: it.model, variant: it.variant, color: it.color, condition: it.condition, price: it.price };
+                          const copy = { ...blankItem(), brand: it.brand, model: it.model, variant: it.variant, color: it.color, condition: it.condition, price: it.price, warranty: it.warranty };
                           const items = [...p.items];
                           items.splice(i + 1, 0, copy);
                           return { ...p, items };
@@ -207,6 +211,9 @@ export default function PurchaseNew() {
                   </Field>
                   <Field label="Battery health (%)">
                     <input className="input num" type="number" min="0" max="100" placeholder="e.g. 95" value={it.battery} onChange={(e) => setItem(i, { battery: e.target.value })} />
+                  </Field>
+                  <Field label="Warranty">
+                    <input className="input" list="warranty-list" placeholder="e.g. 6 Months" value={it.warranty} onChange={(e) => setItem(i, { warranty: e.target.value })} />
                   </Field>
                   <Field label="Condition">
                     <Segmented

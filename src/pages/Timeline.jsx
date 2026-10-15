@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Search, History, ShoppingBag, Wrench, CircleCheckBig, ShoppingCart, Smartphone } from 'lucide-react';
+import { Search, History, ShoppingBag, Wrench, CircleCheckBig, ShoppingCart, Smartphone, ChevronRight } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, StatusChip } from '../components/ui';
@@ -15,18 +15,26 @@ export default function Timeline() {
 
   useEffect(() => setQ(param || ''), [param]);
 
-  const raw = cleanImei(param);
-  // the search accepts an SN too (e.g. G-523) - resolve it to that device's IMEI
-  const imei = devices.find((d) => d.sn && d.sn.toLowerCase() === raw.toLowerCase())?.imei || raw;
+  // an IMEI, IMEI 2 or SN (e.g. G-523) that matches a phone exactly
+  const findExact = (v) => {
+    const l = v.toLowerCase();
+    return v ? devices.find((d) => d.imei.toLowerCase() === l || (d.imei2 || '').toLowerCase() === l || (d.sn || '').toLowerCase() === l) : null;
+  };
+  const typed = cleanImei(q);
+  const fromUrl = cleanImei(param);
+  const exact = findExact(typed);
+  // show the history as soon as the typed text matches a phone; otherwise what was searched
+  const imei = exact ? exact.imei : typed && typed === fromUrl ? findExact(fromUrl)?.imei || fromUrl : '';
+
   const matches = useMemo(() => {
-    const s = cleanImei(q).toLowerCase();
-    if (s.length < 3 || s === imei) return [];
+    const s = typed.toLowerCase();
+    if (s.length < 3 || exact) return [];
     const seen = new Set();
     return devices
-      .filter((d) => d.imei.includes(s) || (d.imei2 || '').includes(s) || (d.sn || '').toLowerCase().includes(s) || deviceName(d).toLowerCase().includes(s))
+      .filter((d) => d.imei.toLowerCase().includes(s) || (d.imei2 || '').toLowerCase().includes(s) || (d.sn || '').toLowerCase().includes(s) || deviceName(d).toLowerCase().includes(s))
       .filter((d) => (seen.has(d.imei) ? false : seen.add(d.imei)))
       .slice(0, 12);
-  }, [q, devices, imei]);
+  }, [typed, devices, exact]);
 
   const history = useMemo(() => {
     if (!imei) return null;
@@ -115,7 +123,7 @@ export default function Timeline() {
   const go = (e) => {
     e.preventDefault();
     const v = cleanImei(q);
-    if (v) navigate(`/timeline/${v}`);
+    if (v) navigate(`/timeline/${encodeURIComponent(exact?.imei || v)}`);
   };
 
   const latest = history?.recs[history.recs.length - 1];
@@ -134,17 +142,28 @@ export default function Timeline() {
           </div>
           {matches.length > 0 && (
             <div className="stack-sm" style={{ marginTop: 12 }}>
+              <span className="xs muted">{matches.length} matching phone{matches.length === 1 ? '' : 's'} - tap one to see its history</span>
               {matches.map((d) => (
-                <button type="button" key={d.id} className="combo-item" onClick={() => navigate(`/timeline/${d.imei}`)}>
-                  <span><b>{deviceName(d)}</b> <span className="mono muted small">{[d.sn, d.imei].filter(Boolean).join(' · ')}</span></span>
-                  <StatusChip status={d.status} />
+                <button type="button" key={d.id} className="combo-item timeline-pick" onClick={() => navigate(`/timeline/${encodeURIComponent(d.imei)}`)}>
+                  <span style={{ minWidth: 0 }}>
+                    <span className="cell-main">{deviceName(d)}</span>
+                    <span className="cell-sub mono" style={{ display: 'block' }}>{[d.sn, d.imei].filter(Boolean).join(' · ')}</span>
+                  </span>
+                  <span className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
+                    <StatusChip status={d.status} />
+                    <ChevronRight size={18} aria-hidden="true" />
+                  </span>
                 </button>
               ))}
             </div>
           )}
         </form>
 
-        {!imei && <div className="card"><Empty icon={History} title="Search an IMEI">Every purchase, repair and sale of the device will show here.</Empty></div>}
+        {!typed && <div className="card"><Empty icon={History} title="Search an IMEI">Type or scan an IMEI or SN. Every purchase, repair and sale of the phone shows here.</Empty></div>}
+
+        {typed && !imei && !matches.length && typed.length >= 3 && (
+          <div className="card"><Empty icon={Smartphone} title="No phone matches">{typed}</Empty></div>
+        )}
 
         {imei && history && !history.recs.length && (
           <div className="card"><Empty icon={Smartphone} title="No record for this IMEI">{imei}</Empty></div>

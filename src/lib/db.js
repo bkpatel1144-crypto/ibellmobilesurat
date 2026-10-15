@@ -161,6 +161,7 @@ export async function createPurchase(form, { settings, purchases, devices = [] }
       variant: (it.variant || '').trim(),
       color: (it.color || '').trim(),
       condition: it.condition || 'Used',
+      warranty: (it.warranty || '').trim(),
       notes: (it.notes || '').trim(),
       purchaseId: pRef.id,
       purchaseNo,

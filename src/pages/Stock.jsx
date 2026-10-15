@@ -212,7 +212,7 @@ function EditDevice({ device, onClose }) {
   const [f, setF] = useState({});
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (device) setF({ brand: device.brand, model: device.model, variant: device.variant || '', color: device.color || '', imei2: device.imei2 || '', condition: device.condition, notes: device.notes || '', battery: device.battery ?? '' });
+    if (device) setF({ brand: device.brand, model: device.model, variant: device.variant || '', color: device.color || '', imei2: device.imei2 || '', condition: device.condition, notes: device.notes || '', battery: device.battery ?? '', warranty: device.warranty || '' });
   }, [device]);
 
   const submit = async (e) => {
@@ -227,6 +227,7 @@ function EditDevice({ device, onClose }) {
         color: f.color.trim(),
         imei2: f.imei2.trim(),
         battery: f.battery === '' || f.battery == null ? null : Math.min(100, Math.max(0, Math.round(Number(f.battery)))),
+        warranty: (f.warranty || '').trim(),
         condition: f.condition,
         notes: f.notes.trim(),
       });
@@ -250,6 +251,7 @@ function EditDevice({ device, onClose }) {
           <Field label="Colour"><input className="input" value={f.color || ''} onChange={set('color')} /></Field>
           <Field label="IMEI 2"><input className="input mono" value={f.imei2 || ''} onChange={set('imei2')} /></Field>
           <Field label="Battery health (%)"><input className="input num" type="number" min="0" max="100" value={f.battery ?? ''} onChange={set('battery')} /></Field>
+          <Field label="Warranty"><input className="input" placeholder="e.g. 6 Months" value={f.warranty || ''} onChange={set('warranty')} /></Field>
           <Field label="Condition">
             <select className="select" value={f.condition || 'Used'} onChange={set('condition')}>
               <option>New</option>

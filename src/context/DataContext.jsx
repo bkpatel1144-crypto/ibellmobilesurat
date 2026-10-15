@@ -31,6 +31,10 @@ export const DEFAULT_SETTINGS = {
   labelWidth: 50,
   labelHeight: 25,
   labelShowBattery: true,
+  labelShowWarranty: true,
+  labelTitlePt: 9,
+  labelCodePt: 8,
+  labelInfoPt: 10,
   autoPrintLabels: false,
 };
 

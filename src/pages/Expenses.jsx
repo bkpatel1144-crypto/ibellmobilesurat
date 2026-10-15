@@ -5,6 +5,8 @@ import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, Kpi, Modal, Field, useConfirm } from '../components/ui';
 import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
+import Pager from '../components/Pager';
+import { usePaged } from '../lib/usePaged';
 import { BarList } from '../components/Charts';
 import PaymentFields from '../components/PaymentFields';
 import { saveExpense, deleteExpense, CASH_ACCOUNT } from '../lib/db';
@@ -65,6 +67,11 @@ export default function Expenses() {
     foot: { date: 'Total', amt: total },
   });
 
+  const pg = usePaged(rows, {
+    resetOn: [range, cat, q],
+    sort: [(e) => e.date, (e) => e.category, (e) => e.paidTo, (e) => e.mode, (e) => num(e.amount), null],
+  });
+
   return (
     <div className="page">
       <PageHeader
@@ -94,13 +101,14 @@ export default function Expenses() {
               </div>
             </div>
             {rows.length ? (
+              <>
               <div className="table-wrap">
-                <table className="table">
+                <table className="table" {...pg.tableProps}>
                   <thead>
                     <tr><th>Date</th><th>Category</th><th>Details</th><th>Paid from</th><th className="num">Amount</th><th /></tr>
                   </thead>
                   <tbody>
-                    {rows.map((e) => (
+                    {pg.rows.map((e) => (
                       <tr key={e.id}>
                         <td className="tnum">{fmtDate(e.date)}</td>
                         <td><span className="chip plain">{e.category}</span></td>
@@ -124,6 +132,8 @@ export default function Expenses() {
                   </tfoot>
                 </table>
               </div>
+              <Pager {...pg.pager} />
+              </>
             ) : (
               <Empty icon={Receipt} title="No expenses in this period" action={<button className="btn btn-primary" onClick={() => setEditing({})}><Plus size={16} /> Add expense</button>} />
             )}

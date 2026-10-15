@@ -5,6 +5,8 @@ import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, Segmented, Kpi } from '../components/ui';
 import { ExportButtons } from '../components/Filters';
+import Pager from '../components/Pager';
+import { usePaged } from '../lib/usePaged';
 import PartyForm from '../components/PartyForm';
 import { partyBalances, balanceLabel } from '../lib/ledger';
 import { money } from '../lib/format';
@@ -64,6 +66,12 @@ export default function Parties() {
     foot: { name: 'Total', rec: receive, pay },
   });
 
+  const pg = usePaged(rows, {
+    resetOn: [q, filter],
+    // balance sorts signed: biggest "to receive" first, "to pay" at the end
+    sort: [(p) => p.name, (p) => TYPE_LABEL[p.type] || p.type, (p) => stats.get(p.id)?.bought || 0, (p) => stats.get(p.id)?.sold || 0, (p) => balances.get(p.id) || 0],
+  });
+
   return (
     <div className="page">
       <PageHeader
@@ -102,8 +110,9 @@ export default function Parties() {
             </div>
           </div>
           {rows.length ? (
+            <>
             <div className="table-wrap">
-              <table className="table">
+              <table className="table" {...pg.tableProps}>
                 <thead>
                   <tr>
                     <th>Party</th>
@@ -114,7 +123,7 @@ export default function Parties() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((p) => {
+                  {pg.rows.map((p) => {
                     const b = balances.get(p.id) || 0;
                     const st = stats.get(p.id);
                     return (
@@ -136,6 +145,8 @@ export default function Parties() {
                 </tbody>
               </table>
             </div>
+            <Pager {...pg.pager} />
+            </>
           ) : (
             <Empty icon={Users} title="No parties" action={<button className="btn btn-primary" onClick={() => setAdding(true)}><Plus size={16} /> New Party</button>} />
           )}

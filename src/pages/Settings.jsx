@@ -657,7 +657,7 @@ function SidebarTab() {
 
 const TABLE_KEYS = [
   'tableHeader', 'tableHeaderCase', 'tableSticky', 'tableSort', 'tableLines', 'tableColumns', 'tableBorder',
-  'tableDensity', 'tableStripes', 'tableHover', 'tableText',
+  'tableDensity', 'tableStripes', 'tableHover', 'tableText', 'pageSize',
 ];
 
 const SAMPLE_ROWS = [
@@ -763,6 +763,9 @@ function TablesTab() {
         </OptionRow>
         <OptionRow title="Table text size">
           {seg('tableText', 'Table text size', [{ value: 'sm', label: 'Small' }, { value: 'md', label: 'Default' }, { value: 'lg', label: 'Large' }])}
+        </OptionRow>
+        <OptionRow title="Rows per page" desc="How many rows each list shows before the page buttons. Can also be changed under any table.">
+          {seg('pageSize', 'Rows per page', ['10', '25', '50', '100'].map((n) => ({ value: n, label: n })))}
         </OptionRow>
       </Section>
       <Section title="Lists & dates">

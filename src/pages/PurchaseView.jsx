@@ -96,7 +96,7 @@ export default function PurchaseView() {
     <div className="page">
       <PageHeader
         title={p.purchaseNo}
-        subtitle={`${fmtDate(p.date)} · ${p.partyName}`}
+        subtitle={[fmtDate(p.date), p.partyName, p.createdBy && `entered by ${p.createdBy}`].filter(Boolean).join(' · ')}
         back={
           <div className="capsule-group glass">
             <button type="button" className="btn btn-icon" onClick={() => navigate(-1)} aria-label="Back"><ArrowLeft size={18} /></button>

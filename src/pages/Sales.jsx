@@ -5,6 +5,8 @@ import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, Segmented } from '../components/ui';
 import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
+import Pager from '../components/Pager';
+import { usePaged } from '../lib/usePaged';
 import { money, num, fmtDate, inRange, byDateDesc, round2 } from '../lib/format';
 
 export default function Sales() {
@@ -45,6 +47,19 @@ export default function Sales() {
     }),
     { total: 0, received: 0, profit: 0, devices: 0 },
   );
+
+  const pg = usePaged(rows, {
+    resetOn: [range, q, status],
+    sort: [
+      (x) => x.date,
+      (x) => x.invoiceNo,
+      (x) => x.customerName,
+      (x) => x.items.map((i) => `${i.brand} ${i.model}`).join(', '),
+      (x) => num(x.total),
+      (x) => num(x.profit),
+      (x) => round2(num(x.total) - num(x.received)),
+    ],
+  });
 
   const exportSpec = () => ({
     settings,
@@ -108,8 +123,9 @@ export default function Sales() {
           </div>
         </div>
         {rows.length ? (
+          <>
           <div className="table-wrap">
-            <table className="table">
+            <table className="table" {...pg.tableProps}>
               <thead>
                 <tr>
                   <th>Date</th>
@@ -122,7 +138,7 @@ export default function Sales() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((x) => {
+                {pg.rows.map((x) => {
                   const due = round2(num(x.total) - num(x.received));
                   return (
                     <tr key={x.id} className="clickable" onClick={() => navigate(`/sales/${x.id}`)}>
@@ -155,6 +171,8 @@ export default function Sales() {
               </tfoot>
             </table>
           </div>
+          <Pager {...pg.pager} />
+          </>
         ) : (
           <Empty
             icon={ShoppingCart}

@@ -7,6 +7,8 @@ import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, Segmented, StatusChip, Kpi, Modal, Field } from '../components/ui';
 import { ExportButtons } from '../components/Filters';
+import Pager from '../components/Pager';
+import { usePaged } from '../lib/usePaged';
 import SendRepairModal from '../components/SendRepairModal';
 import { updateDevice } from '../lib/db';
 import { money, num, fmtDate, deviceName } from '../lib/format';
@@ -72,6 +74,11 @@ export default function Stock() {
     foot: { name: `${rows.length} devices`, cost: rows.reduce((s, d) => s + cost(d), 0) },
   });
 
+  const pg = usePaged(rows, {
+    resetOn: [status, cond, q],
+    sort: [(d) => deviceName(d), (d) => d.imei, (d) => d.condition, (d) => d.supplierName, (d) => num(d.purchasePrice) + num(d.repairCost), (d) => d.status, null],
+  });
+
   return (
     <div className="page">
       <PageHeader
@@ -130,8 +137,9 @@ export default function Stock() {
             </div>
           </div>
           {rows.length ? (
+            <>
             <div className="table-wrap">
-              <table className="table">
+              <table className="table" {...pg.tableProps}>
                 <thead>
                   <tr>
                     <th>Device</th>
@@ -144,7 +152,7 @@ export default function Stock() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((d) => (
+                  {pg.rows.map((d) => (
                     <tr key={d.id}>
                       <td>
                         <div className="cell-main">{deviceName(d)}</div>
@@ -196,6 +204,8 @@ export default function Stock() {
                 </tbody>
               </table>
             </div>
+            <Pager {...pg.pager} />
+            </>
           ) : (
             <Empty icon={Boxes} title="No devices here" />
           )}

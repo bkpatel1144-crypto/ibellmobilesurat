@@ -5,6 +5,8 @@ import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, Modal, Field, useConfirm } from '../components/ui';
 import { ExportButtons, DateRange, PRESETS, defaultRange } from '../components/Filters';
+import Pager from '../components/Pager';
+import { usePaged } from '../lib/usePaged';
 import TransferForm from '../components/TransferForm';
 import { accountLedger } from '../lib/ledger';
 import { saveBank, deleteBank, saveSettings, CASH_ACCOUNT } from '../lib/db';
@@ -70,6 +72,11 @@ export default function Banks() {
     landscape: true,
   });
 
+  const pg = usePaged(stmt.rows, {
+    resetOn: [sel, range],
+    sort: [(r) => r.date, (r) => r.type, (r) => r.particulars, (r) => r.in || null, (r) => r.out || null, (r) => r.balance],
+  });
+
   return (
     <div className="page">
       <PageHeader
@@ -133,13 +140,14 @@ export default function Banks() {
             <span>Closing <b className="num">{money(stmt.closing)}</b></span>
           </div>
           {stmt.rows.length ? (
+            <>
             <div className="table-wrap">
-              <table className="table">
+              <table className="table" {...pg.tableProps}>
                 <thead>
                   <tr><th>Date</th><th>Type</th><th>Particulars</th><th className="num">In</th><th className="num">Out</th><th className="num">Balance</th></tr>
                 </thead>
                 <tbody>
-                  {stmt.rows.map((r, i) => (
+                  {pg.rows.map((r, i) => (
                     <tr key={`${r.id}-${i}`}>
                       <td className="tnum">{fmtDate(r.date)}</td>
                       <td><div className="cell-main">{r.type}</div><div className="cell-sub">{r.ref}</div></td>
@@ -152,6 +160,8 @@ export default function Banks() {
                 </tbody>
               </table>
             </div>
+            <Pager {...pg.pager} />
+            </>
           ) : (
             <Empty icon={Landmark} title="No transactions in this period" />
           )}

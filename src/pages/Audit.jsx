@@ -24,6 +24,8 @@ import { ExportButtons } from '../components/Filters';
 import { startAudit, addAuditScan, removeAuditScans, completeAudit, deleteAudit, AUDIT_KEEP_DAYS } from '../lib/db';
 import { auditResult, findExpected, normCode, daysLeft, EXTRA_LABEL } from '../lib/audit';
 import { beep } from '../lib/beep';
+import Pager from '../components/Pager';
+import { usePaged } from '../lib/usePaged';
 import { fmtDate, cleanImei, deviceName, tsMillis } from '../lib/format';
 
 const SOUND_KEY = 'ibell-audit-sound';
@@ -108,40 +110,7 @@ function AuditHome() {
             <span className="muted small">Each report deletes itself {AUDIT_KEEP_DAYS} days after it is completed</span>
           </div>
           {history.length ? (
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Status</th>
-                    <th>By</th>
-                    <th className="num">Expected</th>
-                    <th className="num">Found</th>
-                    <th className="num">Missing</th>
-                    <th className="num">Extra</th>
-                    <th className="num">Deletes in</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((a) => {
-                    const done = a.status === 'completed';
-                    const left = daysLeft(a);
-                    return (
-                      <tr key={a.id} className="clickable" onClick={() => navigate(`/audit/${a.id}`)}>
-                        <td className="tnum">{fmtDate(a.date)}</td>
-                        <td>{done ? <span className="chip success">Completed</span> : <span className="chip caution">In progress</span>}</td>
-                        <td className="small">{a.completedBy || a.startedBy || '—'}</td>
-                        <td className="num">{done ? a.summary?.expected : a.expected?.length}</td>
-                        <td className="num">{done ? a.summary?.found : '—'}</td>
-                        <td className="num">{done ? (a.summary?.missing ? <span className="chip urgent">{a.summary.missing}</span> : 0) : '—'}</td>
-                        <td className="num">{done ? a.summary?.extra : '—'}</td>
-                        <td className="num muted">{left == null ? '—' : `${left} day${left === 1 ? '' : 's'}`}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <HistoryTable rows={history} navigate={navigate} />
           ) : (
             <Empty icon={ClipboardCheck} title="No audits yet">
               Start an audit, then scan the barcode label of every phone in the shop.
@@ -454,27 +423,7 @@ function AuditSession({ id }) {
 
           {tab === 'extra' &&
             (result.extras.length ? (
-              <div className="table-wrap">
-                <table className="table">
-                  <thead>
-                    <tr><th>Scanned code</th><th>Device</th><th>Why it is extra</th>{live && <th />}</tr>
-                  </thead>
-                  <tbody>
-                    {result.extras.map((x) => (
-                      <tr key={x.code}>
-                        <td className="mono">{x.code}</td>
-                        <td>{x.name || '—'}{x.sn && <div className="cell-sub">SN {x.sn}</div>}</td>
-                        <td><span className={`chip ${x.kind === 'unknown' ? 'urgent' : 'caution'}`}>{EXTRA_LABEL[x.kind]}{x.ref ? ` · ${x.ref}` : ''}</span></td>
-                        {live && (
-                          <td style={{ textAlign: 'right' }}>
-                            <button className="btn btn-sm btn-icon" onClick={() => removeExtra(x)} aria-label="Remove scan"><Undo2 size={14} /></button>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <ExtrasTable rows={result.extras} live={live} onRemove={removeExtra} />
             ) : (
               <Empty icon={CircleCheck} title="No extra phones">Every scanned phone belongs to the stock.</Empty>
             ))}
@@ -489,15 +438,44 @@ function AuditSession({ id }) {
   );
 }
 
-function AuditTable({ rows, action, note }) {
+function ExtrasTable({ rows, live, onRemove }) {
+  const pg = usePaged(rows, { sort: [(x) => x.code, (x) => x.name, (x) => EXTRA_LABEL[x.kind], null] });
   return (
     <div className="table-wrap">
-      <table className="table">
+      <table className="table" {...pg.tableProps}>
+        <thead>
+          <tr><th>Scanned code</th><th>Device</th><th>Why it is extra</th>{live && <th />}</tr>
+        </thead>
+        <tbody>
+          {pg.rows.map((x) => (
+            <tr key={x.code}>
+              <td className="mono">{x.code}</td>
+              <td>{x.name || '—'}{x.sn && <div className="cell-sub">SN {x.sn}</div>}</td>
+              <td><span className={`chip ${x.kind === 'unknown' ? 'urgent' : 'caution'}`}>{EXTRA_LABEL[x.kind]}{x.ref ? ` · ${x.ref}` : ''}</span></td>
+              {live && (
+                <td style={{ textAlign: 'right' }}>
+                  <button className="btn btn-sm btn-icon" onClick={() => onRemove(x)} aria-label="Remove scan"><Undo2 size={14} /></button>
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Pager {...pg.pager} />
+    </div>
+  );
+}
+
+function AuditTable({ rows, action, note }) {
+  const pg = usePaged(rows, { sort: [(e) => e.name, (e) => e.sn, (e) => e.imei, (e) => note?.(e) || '', null] });
+  return (
+    <div className="table-wrap">
+      <table className="table" {...pg.tableProps}>
         <thead>
           <tr><th>Device</th><th>SN</th><th>IMEI</th><th>Note</th>{action && <th />}</tr>
         </thead>
         <tbody>
-          {rows.map((e) => (
+          {pg.rows.map((e) => (
             <tr key={e.deviceId}>
               <td>
                 <div className="cell-main">{e.name}</div>
@@ -511,6 +489,59 @@ function AuditTable({ rows, action, note }) {
           ))}
         </tbody>
       </table>
+      <Pager {...pg.pager} />
+    </div>
+  );
+}
+
+function HistoryTable({ rows, navigate }) {
+  const done = (a) => a.status === 'completed';
+  const pg = usePaged(rows, {
+    sort: [
+      (a) => a.date,
+      (a) => a.status,
+      (a) => a.completedBy || a.startedBy,
+      (a) => (done(a) ? a.summary?.expected : a.expected?.length),
+      (a) => (done(a) ? a.summary?.found : null),
+      (a) => (done(a) ? a.summary?.missing : null),
+      (a) => (done(a) ? a.summary?.extra : null),
+      (a) => daysLeft(a),
+    ],
+  });
+  return (
+    <div className="table-wrap">
+      <table className="table" {...pg.tableProps}>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Status</th>
+            <th>By</th>
+            <th className="num">Expected</th>
+            <th className="num">Found</th>
+            <th className="num">Missing</th>
+            <th className="num">Extra</th>
+            <th className="num">Deletes in</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pg.rows.map((a) => {
+            const left = daysLeft(a);
+            return (
+              <tr key={a.id} className="clickable" onClick={() => navigate(`/audit/${a.id}`)}>
+                <td className="tnum">{fmtDate(a.date)}</td>
+                <td>{done(a) ? <span className="chip success">Completed</span> : <span className="chip caution">In progress</span>}</td>
+                <td className="small">{a.completedBy || a.startedBy || '—'}</td>
+                <td className="num">{done(a) ? a.summary?.expected : a.expected?.length}</td>
+                <td className="num">{done(a) ? a.summary?.found : '—'}</td>
+                <td className="num">{done(a) ? (a.summary?.missing ? <span className="chip urgent">{a.summary.missing}</span> : 0) : '—'}</td>
+                <td className="num">{done(a) ? a.summary?.extra : '—'}</td>
+                <td className="num muted">{left == null ? '—' : `${left} day${left === 1 ? '' : 's'}`}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <Pager {...pg.pager} />
     </div>
   );
 }

@@ -13,6 +13,8 @@ import { partyLedger, balanceLabel } from '../lib/ledger';
 import { deleteParty } from '../lib/db';
 import { money, num, fmtDate, plain, byDateDesc, monthKey, fmtMonth, deviceName } from '../lib/format';
 import { TYPE_LABEL } from './Parties';
+import Pager from '../components/Pager';
+import { usePaged } from '../lib/usePaged';
 
 export default function PartyView() {
   const { id } = useParams();
@@ -56,6 +58,32 @@ export default function PartyView() {
       months: [...months.entries()].sort().slice(-12).map(([k, v]) => ({ label: fmtMonth(k), value: v })),
     };
   }, [id, sales, purchases, devices]);
+
+  // one pager per tab (hooks must run before the early return below)
+  const pgLedger = usePaged(ledger?.rows || [], {
+    resetOn: [id, range],
+    sort: [(r) => r.date, (r) => r.type, (r) => r.particulars, (r) => r.debit || null, (r) => r.credit || null, (r) => r.balance],
+  });
+  const pgSales = usePaged(a.sales, {
+    resetOn: [id],
+    sort: [(s) => s.date, (s) => s.invoiceNo, (s) => s.items.map((i) => `${i.brand} ${i.model}`).join(', '), (s) => num(s.total), (s) => num(s.profit)],
+  });
+  const pgPurch = usePaged(a.purchases, {
+    resetOn: [id],
+    sort: [(p) => p.date, (p) => p.purchaseNo, (p) => p.items.map((i) => `${i.brand} ${i.model}`).join(', '), (p) => num(p.total), (p) => num(p.paid)],
+  });
+  const devCost = (d) => num(d.purchasePrice) + num(d.repairCost);
+  const pgDevices = usePaged(a.fromThem, {
+    resetOn: [id],
+    sort: [
+      (d) => deviceName(d),
+      (d) => d.imei,
+      devCost,
+      (d) => d.status,
+      (d) => (d.status === 'sold' ? num(d.salePrice) : null),
+      (d) => (d.status === 'sold' ? num(d.salePrice) - devCost(d) : null),
+    ],
+  });
 
   if (!party) {
     return (
@@ -184,7 +212,7 @@ export default function PartyView() {
 
           {tab === 'ledger' && (
             <div className="table-wrap">
-              <table className="table">
+              <table className="table" {...pgLedger.tableProps}>
                 <thead>
                   <tr>
                     <th>Date</th>
@@ -196,14 +224,16 @@ export default function PartyView() {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    <td />
-                    <td colSpan={2} className="cell-main">Opening balance</td>
-                    <td />
-                    <td />
-                    <td className="num cell-main">{balText(ledger.opening)}</td>
-                  </tr>
-                  {ledger.rows.map((r, i) => (
+                  {pgLedger.pager.page === 1 && (
+                    <tr>
+                      <td />
+                      <td colSpan={2} className="cell-main">Opening balance</td>
+                      <td />
+                      <td />
+                      <td className="num cell-main">{balText(ledger.opening)}</td>
+                    </tr>
+                  )}
+                  {pgLedger.rows.map((r, i) => (
                     <tr key={i} className={r.link ? 'clickable' : ''} onClick={() => r.link && navigate(r.link)}>
                       <td className="tnum">{fmtDate(r.date)}</td>
                       <td>
@@ -227,15 +257,17 @@ export default function PartyView() {
                 </tfoot>
               </table>
               <p className="xs muted" style={{ marginTop: 8 }}>Dr = party owes you · Cr = you owe the party</p>
+              <Pager {...pgLedger.pager} />
             </div>
           )}
 
           {tab === 'sales' &&
             (a.sales.length ? (
-              <table className="table">
+              <div className="table-wrap">
+              <table className="table" {...pgSales.tableProps}>
                 <thead><tr><th>Date</th><th>Invoice</th><th>Devices</th><th className="num">Total</th><th className="num">Profit</th></tr></thead>
                 <tbody>
-                  {a.sales.map((s) => (
+                  {pgSales.rows.map((s) => (
                     <tr key={s.id} className="clickable" onClick={() => navigate(`/sales/${s.id}`)}>
                       <td className="tnum">{fmtDate(s.date)}</td>
                       <td className="cell-main">{s.invoiceNo}</td>
@@ -246,16 +278,19 @@ export default function PartyView() {
                   ))}
                 </tbody>
               </table>
+              <Pager {...pgSales.pager} />
+              </div>
             ) : (
               <Empty title="No sales to this party" />
             ))}
 
           {tab === 'purchases' &&
             (a.purchases.length ? (
-              <table className="table">
+              <div className="table-wrap">
+              <table className="table" {...pgPurch.tableProps}>
                 <thead><tr><th>Date</th><th>No.</th><th>Devices</th><th className="num">Total</th><th className="num">Paid</th></tr></thead>
                 <tbody>
-                  {a.purchases.map((p) => (
+                  {pgPurch.rows.map((p) => (
                     <tr key={p.id} className="clickable" onClick={() => navigate(`/purchases/${p.id}`)}>
                       <td className="tnum">{fmtDate(p.date)}</td>
                       <td className="cell-main">{p.purchaseNo}</td>
@@ -266,16 +301,19 @@ export default function PartyView() {
                   ))}
                 </tbody>
               </table>
+              <Pager {...pgPurch.pager} />
+              </div>
             ) : (
               <Empty title="No purchases from this party" />
             ))}
 
           {tab === 'devices' &&
             (a.fromThem.length ? (
-              <table className="table">
+              <div className="table-wrap">
+              <table className="table" {...pgDevices.tableProps}>
                 <thead><tr><th>Device</th><th>IMEI</th><th className="num">Cost</th><th>Status</th><th className="num">Sold for</th><th className="num">Profit</th></tr></thead>
                 <tbody>
-                  {a.fromThem.map((d) => {
+                  {pgDevices.rows.map((d) => {
                     const c = num(d.purchasePrice) + num(d.repairCost);
                     return (
                       <tr key={d.id} className="clickable" onClick={() => navigate(`/timeline/${d.imei}`)}>
@@ -290,6 +328,8 @@ export default function PartyView() {
                   })}
                 </tbody>
               </table>
+              <Pager {...pgDevices.pager} />
+              </div>
             ) : (
               <Empty title="No devices bought from this party" />
             ))}

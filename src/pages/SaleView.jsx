@@ -72,7 +72,7 @@ export default function SaleView() {
     <div className="page">
       <PageHeader
         title={s.invoiceNo}
-        subtitle={`${fmtDate(s.date)} · ${s.customerName}`}
+        subtitle={[fmtDate(s.date), s.customerName, s.createdBy && `billed by ${s.createdBy}`].filter(Boolean).join(' · ')}
         back={
           <div className="capsule-group glass">
             <button type="button" className="btn btn-icon" onClick={() => navigate(-1)} aria-label="Back"><ArrowLeft size={18} /></button>

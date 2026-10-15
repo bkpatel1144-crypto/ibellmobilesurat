@@ -65,6 +65,7 @@ function onClick(e) {
   const th = e.target.closest('table.table thead th');
   if (!th || !th.textContent.trim() || e.target.closest('button, a, input, select')) return;
   const table = th.closest('table');
+  if (table.hasAttribute('data-managed-sort')) return; // paginated tables sort the whole list themselves (usePaged)
   const col = th.cellIndex;
   const cur = sorts.get(table);
   const dir = cur && cur.col === col ? -cur.dir : th.classList.contains('num') ? -1 : 1; // numbers start high → low

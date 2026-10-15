@@ -12,13 +12,15 @@ import {
   arrayRemove,
   Timestamp,
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import { num, round2, cleanImei, deviceName, today } from './format';
 
 export const CASH_ACCOUNT = 'cash';
 
 const newRef = (coll) => doc(collection(db, coll));
-const stamp = () => ({ createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+// who did it - saved on every record (standard audit trail)
+const who = () => auth?.currentUser?.email || '';
+const stamp = () => ({ createdAt: serverTimestamp(), createdBy: who(), updatedAt: serverTimestamp(), updatedBy: who() });
 
 /* ------------------------------------------------------------------ numbering */
 
@@ -72,7 +74,7 @@ export async function ensureSerials(list, settings, allDevices) {
   const given = new Map();
   missing.forEach((d, i) => {
     given.set(d.id, sns[i]);
-    batch.update(doc(db, 'devices', d.id), { sn: sns[i], updatedAt: serverTimestamp() });
+    batch.update(doc(db, 'devices', d.id), { sn: sns[i], updatedAt: serverTimestamp(), updatedBy: who() });
   });
   await batch.commit();
   return list.map((d) => (given.has(d.id) ? { ...d, sn: given.get(d.id) } : d));
@@ -101,7 +103,7 @@ export async function saveAttachments(files = []) {
       continue;
     }
     const ref = newRef('attachments');
-    await setDoc(ref, { name: f.name, type: f.type, dataUrl: f.dataUrl, createdAt: serverTimestamp() });
+    await setDoc(ref, { name: f.name, type: f.type, dataUrl: f.dataUrl, createdAt: serverTimestamp(), createdBy: who() });
     ids.push(ref.id);
   }
   return ids;
@@ -362,7 +364,7 @@ export async function createSale(form, { settings, sales, devices }) {
       buyerName: (form.customerName || '').trim() || 'Walk-in Customer',
       buyerPhone: (form.customerPhone || '').trim(),
       hidden,
-      updatedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(), updatedBy: who(),
     });
   }
 
@@ -403,7 +405,7 @@ export async function deleteSale(sale, { payments }) {
       buyerName: null,
       buyerPhone: null,
       hidden: false,
-      updatedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(), updatedBy: who(),
     });
   }
   payments
@@ -416,7 +418,7 @@ export async function deleteSale(sale, { payments }) {
 /** Owner-only: move a sale in or out of the private (hidden) view */
 export async function setSaleHidden(sale, hidden, { payments }) {
   const batch = writeBatch(db);
-  batch.update(doc(db, 'sales', sale.id), { hidden, updatedAt: serverTimestamp() });
+  batch.update(doc(db, 'sales', sale.id), { hidden, updatedAt: serverTimestamp(), updatedBy: who() });
   sale.items.forEach((it) => batch.update(doc(db, 'devices', it.deviceId), { hidden }));
   payments
     .filter((p) => p.refType === 'sale' && p.refId === sale.id)
@@ -427,7 +429,7 @@ export async function setSaleHidden(sale, hidden, { payments }) {
 /* ------------------------------------------------------------------ devices */
 
 export const updateDevice = (id, data) =>
-  updateDoc(doc(db, 'devices', id), { ...data, updatedAt: serverTimestamp() });
+  updateDoc(doc(db, 'devices', id), { ...data, updatedAt: serverTimestamp(), updatedBy: who() });
 
 /* ------------------------------------------------------------------ repairs */
 
@@ -447,7 +449,7 @@ export async function sendToRepair({ device, partyId, partyName, repairer, issue
     hidden: false,
     ...stamp(),
   });
-  batch.update(doc(db, 'devices', device.id), { status: 'in_repair', updatedAt: serverTimestamp() });
+  batch.update(doc(db, 'devices', device.id), { status: 'in_repair', updatedAt: serverTimestamp(), updatedBy: who() });
   await batch.commit();
 }
 
@@ -461,12 +463,12 @@ export async function completeRepair(repair, { cost, date, notes, paid, mode, ac
     doneDate: date,
     doneNotes: (notes || '').trim(),
     paid: p,
-    updatedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(), updatedBy: who(),
   });
   batch.update(doc(db, 'devices', repair.deviceId), {
     status: 'in_stock',
     repairCost: increment(c),
-    updatedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(), updatedBy: who(),
   });
   if (p > 0) {
     batch.set(
@@ -492,7 +494,7 @@ export async function completeRepair(repair, { cost, date, notes, paid, mode, ac
 export async function cancelRepair(repair) {
   const batch = writeBatch(db);
   batch.delete(doc(db, 'repairs', repair.id));
-  batch.update(doc(db, 'devices', repair.deviceId), { status: 'in_stock', updatedAt: serverTimestamp() });
+  batch.update(doc(db, 'devices', repair.deviceId), { status: 'in_stock', updatedAt: serverTimestamp(), updatedBy: who() });
   await batch.commit();
 }
 
@@ -508,14 +510,14 @@ export async function saveParty(party) {
     type: party.type || 'both',
     openingBalance: round2(party.openingBalance),
     notes: (party.notes || '').trim(),
-    updatedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(), updatedBy: who(),
   };
   if (party.id) {
     await updateDoc(doc(db, 'parties', party.id), data);
     return party.id;
   }
   const ref = newRef('parties');
-  await setDoc(ref, { ...data, createdAt: serverTimestamp() });
+  await setDoc(ref, { ...data, createdAt: serverTimestamp(), createdBy: who() });
   return ref.id;
 }
 
@@ -529,10 +531,10 @@ export async function saveBank(bank) {
     ifsc: (bank.ifsc || '').trim().toUpperCase(),
     upiId: (bank.upiId || '').trim(),
     openingBalance: round2(bank.openingBalance),
-    updatedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(), updatedBy: who(),
   };
   if (bank.id) return updateDoc(doc(db, 'banks', bank.id), data);
-  return setDoc(newRef('banks'), { ...data, createdAt: serverTimestamp() });
+  return setDoc(newRef('banks'), { ...data, createdAt: serverTimestamp(), createdBy: who() });
 }
 
 export const deleteBank = (id) => deleteDoc(doc(db, 'banks', id));
@@ -551,10 +553,10 @@ export async function savePayment(p) {
     refNo: p.refNo || '',
     note: (p.note || '').trim(),
     hidden: Boolean(p.hidden),
-    updatedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(), updatedBy: who(),
   };
   if (p.id) return updateDoc(doc(db, 'payments', p.id), data);
-  return setDoc(newRef('payments'), { ...data, createdAt: serverTimestamp() });
+  return setDoc(newRef('payments'), { ...data, createdAt: serverTimestamp(), createdBy: who() });
 }
 
 export const deletePayment = (id) => deleteDoc(doc(db, 'payments', id));
@@ -586,10 +588,10 @@ export async function saveExpense(e) {
     accountId: e.accountId || CASH_ACCOUNT,
     paidTo: (e.paidTo || '').trim(),
     note: (e.note || '').trim(),
-    updatedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(), updatedBy: who(),
   };
   if (e.id) return updateDoc(doc(db, 'expenses', e.id), data);
-  return setDoc(newRef('expenses'), { ...data, createdAt: serverTimestamp() });
+  return setDoc(newRef('expenses'), { ...data, createdAt: serverTimestamp(), createdBy: who() });
 }
 
 export const deleteExpense = (id) => deleteDoc(doc(db, 'expenses', id));
@@ -629,10 +631,10 @@ export async function startAudit({ devices, by, note }) {
 
 /** scan = { code, at (ms), by, manual? } */
 export const addAuditScan = (id, scan) =>
-  updateDoc(doc(db, 'audits', id), { scans: arrayUnion(scan), updatedAt: serverTimestamp() });
+  updateDoc(doc(db, 'audits', id), { scans: arrayUnion(scan), updatedAt: serverTimestamp(), updatedBy: who() });
 
 export const removeAuditScans = (id, scans) =>
-  updateDoc(doc(db, 'audits', id), { scans: arrayRemove(...scans), updatedAt: serverTimestamp() });
+  updateDoc(doc(db, 'audits', id), { scans: arrayRemove(...scans), updatedAt: serverTimestamp(), updatedBy: who() });
 
 /** Freezes the result so the report never changes after completion; the 15 days restart from now. */
 export const completeAudit = (id, result, by) =>
@@ -649,7 +651,7 @@ export const completeAudit = (id, result, by) =>
     completedBy: by || '',
     completedAt: serverTimestamp(),
     expireAt: auditExpiry(),
-    updatedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(), updatedBy: who(),
   });
 
 export const deleteAudit = (id) => deleteDoc(doc(db, 'audits', id));
@@ -657,7 +659,7 @@ export const deleteAudit = (id) => deleteDoc(doc(db, 'audits', id));
 /* ------------------------------------------------------------------ settings */
 
 export const saveSettings = (data) =>
-  setDoc(doc(db, 'settings', 'shop'), { ...data, updatedAt: serverTimestamp() }, { merge: true });
+  setDoc(doc(db, 'settings', 'shop'), { ...data, updatedAt: serverTimestamp(), updatedBy: who() }, { merge: true });
 
 export const savePasskeyHash = (hash) =>
-  setDoc(doc(db, 'settings', 'secure'), { passkeyHash: hash, updatedAt: serverTimestamp() }, { merge: true });
+  setDoc(doc(db, 'settings', 'secure'), { passkeyHash: hash, updatedAt: serverTimestamp(), updatedBy: who() }, { merge: true });

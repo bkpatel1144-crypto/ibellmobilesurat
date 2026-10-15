@@ -6,6 +6,8 @@ import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, Segmented, Kpi, Modal, Field, useConfirm } from '../components/ui';
 import { ExportButtons } from '../components/Filters';
+import Pager from '../components/Pager';
+import { usePaged } from '../lib/usePaged';
 import PaymentFields from '../components/PaymentFields';
 import SendRepairModal from '../components/SendRepairModal';
 import { completeRepair, cancelRepair, CASH_ACCOUNT } from '../lib/db';
@@ -77,6 +79,11 @@ export default function Repairs() {
     foot: { device: `${rows.length} repairs`, cost: rows.reduce((s, r) => s + num(r.cost), 0) },
   });
 
+  const pg = usePaged(rows, {
+    resetOn: [tab, q],
+    sort: [(r) => r.deviceName, (r) => r.partyName || r.repairer, (r) => r.issue, (r) => r.sentDate, (r) => (r.status === 'done' ? num(r.cost) : null), null],
+  });
+
   return (
     <div className="page">
       <PageHeader
@@ -115,8 +122,9 @@ export default function Repairs() {
             </div>
           </div>
           {rows.length ? (
+            <>
             <div className="table-wrap">
-              <table className="table">
+              <table className="table" {...pg.tableProps}>
                 <thead>
                   <tr>
                     <th>Device</th>
@@ -128,7 +136,7 @@ export default function Repairs() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r) => (
+                  {pg.rows.map((r) => (
                     <tr key={r.id}>
                       <td>
                         <div className="cell-main">{r.deviceName}</div>
@@ -161,6 +169,8 @@ export default function Repairs() {
                 </tbody>
               </table>
             </div>
+            <Pager {...pg.pager} />
+            </>
           ) : (
             <Empty icon={Wrench} title={tab === 'in_repair' ? 'No device at repair' : 'No repairs'} />
           )}

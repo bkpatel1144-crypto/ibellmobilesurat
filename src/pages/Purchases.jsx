@@ -5,6 +5,8 @@ import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
 import { Empty } from '../components/ui';
 import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
+import Pager from '../components/Pager';
+import { usePaged } from '../lib/usePaged';
 import { money, num, fmtDate, inRange, byDateDesc, round2 } from '../lib/format';
 
 export default function Purchases() {
@@ -59,6 +61,19 @@ export default function Purchases() {
     foot: { date: 'Total', no: '', party: '', devices: `${tot.devices} devices`, total: tot.total, paid: tot.paid, due: tot.total - tot.paid },
   });
 
+  const pg = usePaged(rows, {
+    resetOn: [range, q],
+    sort: [
+      (p) => p.date,
+      (p) => p.purchaseNo,
+      (p) => p.partyName,
+      (p) => p.items.map((i) => `${i.brand} ${i.model}`).join(', '),
+      (p) => num(p.total),
+      (p) => num(p.paid),
+      (p) => round2(num(p.total) - num(p.paid)),
+    ],
+  });
+
   return (
     <div className="page">
       <PageHeader
@@ -82,8 +97,9 @@ export default function Purchases() {
           </div>
         </div>
         {rows.length ? (
+          <>
           <div className="table-wrap">
-            <table className="table">
+            <table className="table" {...pg.tableProps}>
               <thead>
                 <tr>
                   <th>Date</th>
@@ -96,7 +112,7 @@ export default function Purchases() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((p) => {
+                {pg.rows.map((p) => {
                   const due = round2(num(p.total) - num(p.paid));
                   return (
                     <tr key={p.id} className="clickable" onClick={() => navigate(`/purchases/${p.id}`)}>
@@ -124,6 +140,8 @@ export default function Purchases() {
               </tfoot>
             </table>
           </div>
+          <Pager {...pg.pager} />
+          </>
         ) : (
           <Empty
             icon={ShoppingBag}

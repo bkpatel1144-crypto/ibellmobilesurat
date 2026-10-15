@@ -33,6 +33,7 @@ export const PREF_DEFAULTS = {
   tableSort: 'on', // on | off  (click a header to sort)
   tableHover: 'on', // on | off  (highlight the row under the pointer)
   tableText: 'md', // sm | md | lg
+  pageSize: '25', // 10 | 25 | 50 | 100 rows per page
   defaultRange: 'month', // today | 7d | month | fy | all
   dateFormat: 'medium', // medium | dmy | iso
   startPage: '/', // / | /sales/new | /sales | /stock

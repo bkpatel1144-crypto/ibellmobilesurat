@@ -6,6 +6,8 @@ import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
 import { Empty, Segmented, Kpi, useConfirm } from '../components/ui';
 import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
+import Pager from '../components/Pager';
+import { usePaged } from '../lib/usePaged';
 import PaymentForm from '../components/PaymentForm';
 import TransferForm from '../components/TransferForm';
 import { deletePayment } from '../lib/db';
@@ -84,6 +86,19 @@ export default function Payments() {
     foot: { date: 'Total', in: tin, out: tout },
   });
 
+  const pg = usePaged(rows, {
+    resetOn: [range, dir, acc, q],
+    sort: [
+      (p) => p.date,
+      (p) => p.partyName,
+      (p) => p.refNo,
+      (p) => p.mode,
+      (p) => (p.direction !== 'out' ? num(p.amount) : null),
+      (p) => (p.direction === 'out' ? num(p.amount) : null),
+      null,
+    ],
+  });
+
   return (
     <div className="page">
       <PageHeader
@@ -130,13 +145,14 @@ export default function Payments() {
             </div>
           </div>
           {rows.length ? (
+            <>
             <div className="table-wrap">
-              <table className="table">
+              <table className="table" {...pg.tableProps}>
                 <thead>
                   <tr><th>Date</th><th>Party</th><th>Against</th><th>Mode · Account</th><th className="num">In</th><th className="num">Out</th><th /></tr>
                 </thead>
                 <tbody>
-                  {rows.map((p) => (
+                  {pg.rows.map((p) => (
                     <tr key={p.id}>
                       <td className="tnum">{fmtDate(p.date)}</td>
                       <td>
@@ -164,6 +180,8 @@ export default function Payments() {
                 </tbody>
               </table>
             </div>
+            <Pager {...pg.pager} />
+            </>
           ) : (
             <Empty icon={Wallet} title="No payments in this period" />
           )}

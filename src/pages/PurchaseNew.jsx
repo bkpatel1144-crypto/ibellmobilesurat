@@ -90,7 +90,7 @@ export default function PurchaseNew() {
     if (errs.length) return;
     setBusy(true);
     try {
-      const { id, purchaseNo, devices: saved } = await createPurchase(f, { settings, purchases, devices: data.raw.devices });
+      const { id, purchaseNo, devices: saved } = await createPurchase(f, { settings, purchases: data.raw.purchases, devices: data.raw.devices });
       toast(`Purchase ${purchaseNo} saved`);
       if (settings.autoPrintLabels) {
         const { printLabels } = await import('../lib/labels');

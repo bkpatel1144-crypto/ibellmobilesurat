@@ -2736,6 +2736,90 @@ body::before {
   border-top: 1px solid var(--color-outline-variant);
 }
 
+/* ---------- Pagination ---------- */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-outline-variant);
+  font-size: var(--text-sm);
+  color: var(--color-on-surface-variant);
+}
+
+.pager-count b {
+  color: var(--color-on-surface);
+}
+
+.pager-size {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pager-size .select {
+  width: 76px;
+  height: 34px;
+}
+
+.pager-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.pager-btn {
+  display: inline-grid;
+  place-items: center;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-outline-variant);
+  background: var(--color-surface-container-high);
+  color: var(--color-on-surface);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color var(--dur-micro) linear;
+}
+
+.pager-btn:hover:not(:disabled) {
+  background: var(--hover-overlay);
+}
+
+.pager-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pager-btn.on,
+.pager-btn.on:hover:not(:disabled) {
+  background: var(--primary-fill);
+  color: var(--color-on-primary);
+  border-color: transparent;
+}
+
+.pager-gap {
+  padding: 0 4px;
+}
+
+@media (max-width: 720px) {
+  .pager-nav {
+    margin-left: 0;
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* paginated tables: only columns with a sort get the pointer */
+:root[data-table-sort='on'] .table[data-managed-sort] thead th:not([data-sortable]) {
+  cursor: default;
+}
+
 /* ---------- Tables ---------- */
 :root[data-table-density='compact'] .table th,
 :root[data-table-density='compact'] .table td {

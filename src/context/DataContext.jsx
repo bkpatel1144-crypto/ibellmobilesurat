@@ -195,12 +195,39 @@ function applyPrivacy(raw) {
     payments.push(p);
   }
 
+  // A fully hidden purchase would leave a hole in the purchase numbers (PUR-0002, PUR-0003 with no
+  // PUR-0001). While locked, each later number moves down by the hidden purchases before it, so the
+  // series reads without gaps. Gaps from purchases that were really deleted are left as they are.
+  const showNo = gaplessNumbers(raw.purchases.filter((p) => hiddenPurchases.has(p.id)).map((p) => p.purchaseNo));
+  const purchaseNo = new Map(purchases.map((p) => [p.id, showNo(p.purchaseNo)]));
+
   return {
     ...raw,
-    devices: raw.devices.filter((d) => !d.hidden),
+    devices: raw.devices
+      .filter((d) => !d.hidden)
+      .map((d) => (purchaseNo.has(d.purchaseId) ? { ...d, purchaseNo: purchaseNo.get(d.purchaseId) } : d)),
     sales: raw.sales.filter((s) => !s.hidden),
-    purchases,
+    purchases: purchases.map((p) => ({ ...p, purchaseNo: purchaseNo.get(p.id) })),
     repairs: raw.repairs.filter((r) => !hiddenRepairs.has(r.id)),
-    payments,
+    payments: payments.map((p) => (p.refType === 'purchase' && purchaseNo.has(p.refId) ? { ...p, refNo: purchaseNo.get(p.refId) } : p)),
+  };
+}
+
+/** Returns a function that renumbers e.g. PUR-0005 → PUR-0004 when one hidden number sits below it. */
+function gaplessNumbers(hiddenNos) {
+  const split = (no) => {
+    const m = /^(.*?)(\d+)$/.exec(no || '');
+    return m ? { prefix: m[1], n: Number(m[2]), width: m[2].length } : null;
+  };
+  const hidden = {};
+  for (const no of hiddenNos) {
+    const s = split(no);
+    if (s) (hidden[s.prefix] ||= []).push(s.n);
+  }
+  return (no) => {
+    const s = split(no);
+    if (!s || !hidden[s.prefix]) return no;
+    const below = hidden[s.prefix].filter((n) => n < s.n).length;
+    return below ? `${s.prefix}${String(s.n - below).padStart(s.width, '0')}` : no;
   };
 }

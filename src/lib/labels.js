@@ -3,7 +3,7 @@
 //   ||||||||||||||||||||||||||||   ← CODE128 of the IMEI (scan it in New Sale / Stock Audit)
 //        355262965973925
 //   SN: G-523              BH: 95%
-//   WARRANTY: 6 MONTHS
+//   W: 6 MONTHS
 // One label per PDF page, page size = label size, so thermal label printers print 1:1.
 // Text sizes come from Settings; the barcode takes whatever height is left.
 
@@ -39,7 +39,7 @@ export function labelLayout(d, settings) {
   const warranty = settings?.labelShowWarranty !== false ? String(d.warranty || '').trim() : '';
   const info = [];
   if (d.sn || battery) info.push({ left: d.sn ? `SN: ${d.sn}` : '', right: battery });
-  if (warranty) info.push({ left: `WARRANTY: ${warranty.toUpperCase()}`, right: '' });
+  if (warranty) info.push({ left: `W: ${warranty.toUpperCase()}`, right: '' });
 
   const titleTop = pad;
   const barcodeTop = titleTop + lineH(fTitle) + 0.4;

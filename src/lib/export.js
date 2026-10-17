@@ -327,6 +327,11 @@ export async function invoicePdf(sale, settings, { action = 'download' } = {}) {
   ty += 10;
   doc.text('Received', W - 80, ty);
   doc.text(moneyPdf(sale.received), W - M, ty, { align: 'right' });
+  if (num(sale.advance) > 0) {
+    ty += 5.5;
+    doc.text('Advance adjusted', W - 80, ty);
+    doc.text(moneyPdf(sale.advance), W - M, ty, { align: 'right' });
+  }
   if (num(sale.returned) > 0) {
     // the bill itself never changes; returns are separate credit notes
     ty += 5.5;
@@ -483,6 +488,7 @@ export function purchaseVoucherPdf(p, settings, { output = 'save' } = {}) {
       ...(num(p.discount) ? [['Discount', `- Rs. ${plain(p.discount)}`]] : []),
       ['Total', `Rs. ${plain(p.total)}`],
       ['Paid', `Rs. ${plain(p.paid)}`],
+      ...(num(p.advance) > 0 ? [['Advance adjusted', `Rs. ${plain(p.advance)}`]] : []),
       ...(num(p.returned) > 0 ? [['Returned (debit notes)', `- Rs. ${plain(p.returned)}`], ['Refund received', `Rs. ${plain(p.refunded)}`]] : []),
       [due < -0.004 ? 'Supplier owes' : 'Balance', `Rs. ${plain(Math.abs(due))}`],
     ],

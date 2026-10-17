@@ -219,6 +219,7 @@ export default function SaleView() {
               )}
               <div className="grand"><span>Total</span><span className="num">{money(s.total)}</span></div>
               <div><span className="muted">Received</span><span className="num">{money(s.received)}</span></div>
+              {num(s.advance) > 0 && <div><span className="muted">Advance adjusted</span><span className="num">{money(s.advance)}</span></div>}
               {num(s.returned) > 0 && (
                 <>
                   <div><span className="muted">Returned (credit notes)</span><span className="num">− {money(s.returned)}</span></div>

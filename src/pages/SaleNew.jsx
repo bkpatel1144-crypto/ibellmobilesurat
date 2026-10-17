@@ -16,7 +16,7 @@ let seq = 0;
 
 export default function SaleNew() {
   const data = useData();
-  const { devices, settings, privacy } = data;
+  const { devices, settings, privacy, advances } = data;
   const canProfit = data.can('viewProfit');
   const toast = useToast();
   const navigate = useNavigate();
@@ -96,7 +96,10 @@ export default function SaleNew() {
   const subtotal = round2(f.items.reduce((s, it) => s + num(it.price), 0));
   const { taxable, tax, total } = billTotals({ subtotal, discount: f.discount, rate, inclusive });
   const split = splitGst(tax, settings.gstin, f.customerGstin);
-  const balance = round2(total - num(f.received));
+  // advance (booking amount) this customer paid earlier on account is adjusted against the bill
+  const advanceFree = f.partyId ? advances?.get(f.partyId)?.in || 0 : 0;
+  const advance = round2(Math.min(advanceFree, Math.max(0, total - num(f.received))));
+  const balance = round2(total - num(f.received) - advance);
   const cost = f.items.reduce((s, it) => {
     const d = devMap.get(it.deviceId);
     return s + num(d?.purchasePrice) + num(d?.repairCost);
@@ -316,7 +319,7 @@ export default function SaleNew() {
                 <Field label="Amount received (₹)">
                   <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
                     <input className="input num" type="number" min="0" step="0.01" value={f.received} onChange={(e) => setF({ ...f, received: e.target.value })} />
-                    <button type="button" className="btn btn-sm" onClick={() => setF({ ...f, received: String(total) })}>Full</button>
+                    <button type="button" className="btn btn-sm" onClick={() => setF({ ...f, received: String(round2(Math.max(0, total - advanceFree))) })}>Full</button>
                   </div>
                 </Field>
               </div>
@@ -371,6 +374,7 @@ export default function SaleNew() {
               )}
               <div className="grand"><span>Total</span><span className="num">{money(total)}</span></div>
               <div><span className="muted">Received</span><span className="num">{money(num(f.received))}</span></div>
+              {advance > 0 && <div><span className="muted">Advance adjusted</span><span className="num">{money(advance)}</span></div>}
               <div><span className="muted">Balance due</span><b className="num">{money(Math.max(balance, 0))}</b></div>
               {canProfit && privacy.unlocked && f.items.length > 0 && (
                 <div><span className="muted">Profit</span><span className="num">{money(taxable - cost)}</span></div>

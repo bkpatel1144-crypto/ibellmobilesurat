@@ -17,10 +17,11 @@ export default function MoreMenu({ items, label = 'More actions', small = false 
   const pop = useRef();
   const navigate = useNavigate();
 
-  // open below the button, or above it when the screen has no room below (rows near the bottom)
-  useLayoutEffect(() => {
-    if (!open) return;
-    const r = btn.current.getBoundingClientRect();
+  // below the button, or above it when the screen has no room below (rows near the bottom).
+  // Returns false once the button has left the screen.
+  const place = () => {
+    const r = btn.current?.getBoundingClientRect();
+    if (!r || r.bottom < 0 || r.top > window.innerHeight) return false;
     const width = 232;
     const left = Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8));
     const height = list.length * 40 + 10; // items are 40px + the list padding
@@ -28,26 +29,36 @@ export default function MoreMenu({ items, label = 'More actions', small = false 
     const above = r.top - 16;
     if (height <= below || below >= above) setPos({ top: r.bottom + 8, left, width, maxHeight: below, transformOrigin: 'top right' });
     else setPos({ top: Math.max(8, r.top - 8 - Math.min(height, above)), left, width, maxHeight: above, transformOrigin: 'bottom right' });
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+    return true;
+  };
+  const placeRef = useRef(place);
+  placeRef.current = place;
+
+  useLayoutEffect(() => {
+    if (open) placeRef.current();
+  }, [open]);
 
   useEffect(() => {
     if (!open) return undefined;
     const close = (e) => !pop.current?.contains(e.target) && !btn.current?.contains(e.target) && setOpen(false);
-    // the page scrolling moves the button away, so close - but not when the list itself scrolls
-    const shut = (e) => !(e.target instanceof Node && pop.current?.contains(e.target)) && setOpen(false);
+    // the page scrolling: follow the button (a small scroll right after a tap must not close it)
+    const follow = (e) => {
+      if (e.target instanceof Node && pop.current?.contains(e.target)) return; // the list itself scrolling
+      if (!placeRef.current()) setOpen(false);
+    };
     document.addEventListener('pointerdown', close);
-    window.addEventListener('resize', shut);
-    window.addEventListener('scroll', shut, true);
+    window.addEventListener('resize', follow);
+    window.addEventListener('scroll', follow, true);
     return () => {
       document.removeEventListener('pointerdown', close);
-      window.removeEventListener('resize', shut);
-      window.removeEventListener('scroll', shut, true);
+      window.removeEventListener('resize', follow);
+      window.removeEventListener('scroll', follow, true);
     };
   }, [open]);
 
   useEffect(() => {
-    if (open && pos) pop.current?.querySelectorAll('[role=menuitem]')[active]?.focus();
-  }, [open, pos, active]);
+    if (open) pop.current?.querySelectorAll('[role=menuitem]')[active]?.focus({ preventScroll: true });
+  }, [open, Boolean(pos), active]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!list.length) return null;
 

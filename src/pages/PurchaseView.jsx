@@ -126,7 +126,7 @@ export default function PurchaseView() {
         <div className="kpis">
           <div className="kpi"><div className="kpi-label">Party</div><div className="kpi-value" style={{ fontSize: 20 }}><Link to={`/parties/${p.partyId}`}>{p.partyName}</Link></div><div className="kpi-sub">{p.supplierBillNo ? `Bill ${p.supplierBillNo}` : 'No supplier bill no.'}</div></div>
           <div className="kpi"><div className="kpi-label">Total</div><div className="kpi-value">{money(p.total)}</div><div className="kpi-sub">{p.items.length} device(s)</div></div>
-          <div className="kpi"><div className="kpi-label">Paid</div><div className="kpi-value">{money(p.paid)}</div></div>
+          <div className="kpi"><div className="kpi-label">Paid</div><div className="kpi-value">{money(num(p.paid) + num(p.advance))}</div>{num(p.advance) > 0 && <div className="kpi-sub">incl. {money(p.advance)} advance</div>}</div>
           <div className="kpi"><div className="kpi-label">Balance</div><div className="kpi-value">{money(Math.abs(due))}</div><div className="kpi-sub">{due > 0 ? 'To pay' : due < -0.004 ? 'Supplier owes you' : 'Settled'}</div></div>
         </div>
 
@@ -251,6 +251,7 @@ export default function PurchaseView() {
               {num(p.discount) > 0 && <div><span className="muted">Discount</span><span className="num">− {money(p.discount)}</span></div>}
               <div className="grand"><span>Total</span><span className="num">{money(p.total)}</span></div>
               <div><span className="muted">Paid</span><span className="num">{money(p.paid)}</span></div>
+              {num(p.advance) > 0 && <div><span className="muted">Advance adjusted</span><span className="num">{money(p.advance)}</span></div>}
               {num(p.returned) > 0 && (
                 <>
                   <div><span className="muted">Returned (debit notes)</span><span className="num">− {money(p.returned)}</span></div>

@@ -190,6 +190,13 @@ export default function PartyView() {
 
         <div className="kpis">
           <Kpi inverse label="Balance" value={money(Math.abs(bal))} sub={balanceLabel(bal)} />
+          {(data.advances?.get(party.id)?.out > 0 || data.advances?.get(party.id)?.in > 0) && (
+            <Kpi
+              label="Advance not used yet"
+              value={money((data.advances.get(party.id).out || 0) + (data.advances.get(party.id).in || 0))}
+              sub={data.advances.get(party.id).out > 0 ? 'Paid to them · adjusts their next purchase' : 'Received from them · adjusts their next bill'}
+            />
+          )}
           <Kpi label="Sold to them" value={money(a.salesTotal)} sub={showProfit ? `${a.salesCount} devices · profit ${money(a.salesProfit)}` : `${a.salesCount} devices`} />
           <Kpi label="Bought from them" value={money(a.purchTotal)} sub={`${a.purchCount} devices`} />
           {showProfit && <Kpi label="Profit on their devices" value={money(a.supplyProfit)} sub={`${a.soldFromThem} of ${a.fromThem.length} sold`} />}

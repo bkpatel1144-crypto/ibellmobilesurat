@@ -116,7 +116,9 @@ function PurchaseForm({ editId }) {
 
   const subtotal = round2(f.items.reduce((s, it) => s + num(it.price), 0));
   const total = round2(subtotal + num(f.otherCharges) - num(f.discount));
-  const due = round2(total - num(f.paid));
+  // advance already paid to this supplier (on account) is adjusted against the new purchase
+  const advance = editing || !f.partyId ? 0 : round2(Math.min(data.advances?.get(f.partyId)?.out || 0, Math.max(0, total - num(f.paid))));
+  const due = round2(total - num(f.paid) - advance);
 
   const validate = () => {
     const errs = [];
@@ -390,7 +392,7 @@ function PurchaseForm({ editId }) {
                     <Field label="Paid now (₹)">
                       <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
                         <input className="input num" type="number" min="0" step="0.01" value={f.paid} onChange={(e) => setF({ ...f, paid: e.target.value })} />
-                        <button type="button" className="btn btn-sm" onClick={() => setF({ ...f, paid: String(total) })}>Full</button>
+                        <button type="button" className="btn btn-sm" onClick={() => setF({ ...f, paid: String(round2(Math.max(0, total - (data.advances?.get(f.partyId)?.out || 0)))) })}>Full</button>
                       </div>
                     </Field>
                   </div>
@@ -423,6 +425,12 @@ function PurchaseForm({ editId }) {
                     <span className="muted">Paid</span>
                     <span className="num">{money(num(f.paid))}</span>
                   </div>
+                  {advance > 0 && (
+                    <div>
+                      <span className="muted">Advance adjusted</span>
+                      <span className="num">{money(advance)}</span>
+                    </div>
+                  )}
                   <div>
                     <span className="muted">{due >= 0 ? 'Balance to pay' : 'Paid extra'}</span>
                     <b className="num">{money(Math.abs(due))}</b>

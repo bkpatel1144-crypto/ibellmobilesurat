@@ -203,20 +203,57 @@ function withSettlement(d) {
     add(returnCount, x.billId, x.items?.length || 0);
   }
   const extra = (id) => ({ returned: round2(returned.get(id) || 0), refunded: round2(refunded.get(id) || 0), returnedCount: returnCount.get(id) || 0 });
-  return {
-    ...d,
-    purchases: d.purchases.map((p) => {
-      const x = extra(p.id);
-      const pd = round2(Math.min(paid.get(p.id) || 0, Math.max(num(p.total), 0)));
-      return { ...p, ...x, paid: pd, due: round2(num(p.total) - x.returned - pd + x.refunded) };
-    }),
-    sales: d.sales.map((s) => {
-      const x = extra(s.id);
-      const rc = round2(paid.get(s.id) || 0);
-      return { ...s, ...x, received: rc, due: round2(num(s.total) - x.returned - rc + x.refunded) };
-    }),
+
+  const purchases = d.purchases.map((p) => {
+    const x = extra(p.id);
+    const direct = paid.get(p.id) || 0;
+    const pd = round2(Math.min(direct, Math.max(num(p.total), 0)));
+    return { ...p, ...x, paid: pd, overpaid: round2(Math.max(0, direct - pd)), due: round2(num(p.total) - x.returned - pd + x.refunded) };
+  });
+  const sales = d.sales.map((s) => {
+    const x = extra(s.id);
+    const rc = round2(paid.get(s.id) || 0);
+    return { ...s, ...x, received: rc, due: round2(num(s.total) - x.returned - rc + x.refunded) };
+  });
+
+  // Advances: money paid / received "on account" (no bill chosen) settles the party's oldest open
+  // bills first - after any opening balance it must clear - like Tally's "advance adjusted".
+  // Paid out → purchases; received → sales. What is left stays as the party's advance.
+  const pool = new Map(); // `${partyId}|out` / `${partyId}|in` → amount still free
+  for (const p of d.payments) {
+    if (!p.partyId || (p.refType && p.refType !== 'manual') || (p.direction !== 'in' && p.direction !== 'out')) continue;
+    add(pool, `${p.partyId}|${p.direction}`, p.amount);
+  }
+  for (const p of purchases) if (p.overpaid > 0) add(pool, `${p.partyId}|out`, p.overpaid); // paid more than the bill
+  for (const party of d.parties) {
+    const ob = num(party.openingBalance); // > 0 they owed us · < 0 we owed them
+    if (ob < 0) add(pool, `${party.id}|out`, ob); // our payments clear the old debt first
+    if (ob > 0) add(pool, `${party.id}|in`, -ob); // their payments clear their old debt first
+  }
+  const settle = (bills, dir) => {
+    const order = [...bills].sort((a, b) => (a.date || '').localeCompare(b.date || '') || tsOf(a) - tsOf(b));
+    for (const b of order) {
+      const key = `${b.partyId}|${dir}`;
+      const free = pool.get(key) || 0;
+      if (!b.partyId || free <= 0.004 || b.due <= 0.004) continue;
+      const adj = round2(Math.min(free, b.due));
+      pool.set(key, free - adj);
+      b.advance = adj;
+      b.due = round2(b.due - adj);
+    }
   };
+  settle(purchases, 'out');
+  settle(sales, 'in');
+  const advances = new Map(); // partyId → { out: paid to them, not yet used · in: received, not yet used }
+  for (const [key, v] of pool) {
+    if (v <= 0.004) continue;
+    const [id, dir] = key.split('|');
+    advances.set(id, { out: 0, in: 0, ...advances.get(id), [dir]: round2(v) });
+  }
+  return { ...d, purchases, sales, advances };
 }
+
+const tsOf = (x) => (x.createdAt?.toMillis ? x.createdAt.toMillis() : 0);
 
 /**
  * Private (cash) sales: while locked, every trace of a privately sold device disappears -

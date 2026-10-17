@@ -51,7 +51,7 @@ export default function Sales() {
   const tot = rows.reduce(
     (a, x) => ({
       total: a.total + num(x.total),
-      received: a.received + num(x.received),
+      received: a.received + num(x.received) + num(x.advance),
       due: a.due + num(x.due),
       returned: a.returned + num(x.returned),
       profit: a.profit + num(x.profit),
@@ -98,7 +98,7 @@ export default function Sales() {
       devices: x.items.map((i) => `${i.brand} ${i.model} (${i.imei})`).join(', '),
       mode: x.mode,
       total: x.total,
-      received: x.received,
+      received: num(x.received) + num(x.advance),
       returned: x.returned || '',
       due: round2(num(x.due)),
       profit: x.profit,

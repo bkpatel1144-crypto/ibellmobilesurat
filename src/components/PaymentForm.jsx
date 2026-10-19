@@ -3,7 +3,7 @@ import { Modal, Field, Segmented } from './ui';
 import PartySelect from './PartySelect';
 import PaymentFields from './PaymentFields';
 import { savePayment, CASH_ACCOUNT } from '../lib/db';
-import { today, money, num, round2, fmtDate } from '../lib/format';
+import { today, money, num, round2, fmtDate, amountText } from '../lib/format';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 
@@ -129,7 +129,16 @@ export default function PaymentForm({ open, onClose, payment, preset }) {
         {locked && f.refNo && <div className="small muted">Against <b>{f.refNo}</b></div>}
         <div className="form-grid">
           <Field label="Amount (₹)" required>
-            <input className="input num" type="number" min="0" step="0.01" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} />
+            <input
+              className="input num"
+              inputMode="decimal"
+              value={f.amount}
+              onChange={(e) => {
+                setF({ ...f, amount: amountText(e.target.value) });
+                if (error === 'Enter an amount.') setError('');
+              }}
+              aria-invalid={error === 'Enter an amount.'}
+            />
           </Field>
           <Field label="Date" required>
             <input className="input" type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} required />

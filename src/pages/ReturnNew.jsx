@@ -8,7 +8,7 @@ import { Field, Segmented, Empty, SkeletonPage } from '../components/ui';
 import PaymentFields from '../components/PaymentFields';
 import { createReturn, updateReturn, CASH_ACCOUNT } from '../lib/db';
 import { REASONS, KIND_LABEL, NOTE_TITLE, returnTotals, returnableSaleLines, returnablePurchaseLines, returnOf, saleLineValue, suggestedRefund } from '../lib/returns';
-import { money, num, round2, today, fmtDate, cleanImei } from '../lib/format';
+import { money, num, round2, today, fmtDate, cleanImei, amountText } from '../lib/format';
 
 /** One form for a new return and for editing one; keyed so switching bills starts fresh. */
 export default function ReturnNew() {
@@ -72,7 +72,7 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
     accountId: CASH_ACCOUNT,
   }));
   const [busy, setBusy] = useState(false);
-  const [errors, setErrors] = useState([]);
+  const [tried, setTried] = useState(false); // after a failed save the messages follow the form live
   const setPay = useCallback((v) => setF((p) => ({ ...p, ...v })), []);
 
   const lines = returnable
@@ -136,7 +136,7 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
     const errs = [];
     if (!lines.length) errs.push('Tick at least one phone to return.');
     for (const l of lines) {
-      if (!(l.value > 0)) errs.push(`${l.brand} ${l.model}: enter the return amount.`);
+      if (!(l.value > 0)) errs.push(`${l.brand} ${l.model}: enter ${sale ? 'the return amount' : 'what the supplier gives back'} (above the phone, more than ₹0).`);
       else if (sale && l.value > fullValue(l) + 0.004) errs.push(`${l.brand} ${l.model}: can't be more than its bill value ${money(fullValue(l))}.`);
     }
     if (!editing && t && refund > t.total + 0.004) errs.push('Refund is more than the return total.');
@@ -146,9 +146,8 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
 
   const save = async (e) => {
     e.preventDefault();
-    const errs = validate();
-    setErrors(errs);
-    if (errs.length) return;
+    setTried(true);
+    if (validate().length) return;
     setBusy(true);
     const values = new Map(lines.map((l) => [l.deviceId, l.value]));
     try {
@@ -183,6 +182,7 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
     );
   }
 
+  const errors = tried ? validate() : [];
   const title = editing ? `Edit ${note.returnNo}` : sale ? 'New sales return' : 'New purchase return';
   const already = bill && !editing ? bill.items.filter((it) => !returnable.some((r) => r.deviceId === it.deviceId)) : [];
 
@@ -307,11 +307,11 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
                             <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
                               <input
                                 className="input num"
-                                type="number"
-                                min="0"
-                                step="0.01"
+                                inputMode="decimal"
+                                placeholder={String(fullValue(it))}
                                 value={picked[it.deviceId]}
-                                onChange={(e) => setPicked((p) => ({ ...p, [it.deviceId]: e.target.value }))}
+                                onChange={(e) => setPicked((p) => ({ ...p, [it.deviceId]: amountText(e.target.value) }))}
+                                aria-invalid={tried && !(num(picked[it.deviceId]) > 0)}
                               />
                               <button type="button" className="btn btn-sm" onClick={() => setPicked((p) => ({ ...p, [it.deviceId]: String(fullValue(it)) }))}>Full</button>
                             </div>
@@ -377,11 +377,9 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
                           <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
                             <input
                               className="input num"
-                              type="number"
-                              min="0"
-                              step="0.01"
+                              inputMode="decimal"
                               value={walkIn ? String(t.total) : f.refund === null ? String(suggest) : f.refund}
-                              onChange={(e) => setF({ ...f, refund: e.target.value })}
+                              onChange={(e) => setF({ ...f, refund: amountText(e.target.value) })}
                               disabled={walkIn}
                             />
                             {!walkIn && <button type="button" className="btn btn-sm" onClick={() => setF({ ...f, refund: '0' })}>None</button>}

@@ -8,6 +8,14 @@ export const num = (v) => {
 
 export const round2 = (v) => Math.round(num(v) * 100) / 100;
 
+/** A typed amount kept as text: "48,000" or "₹48000" → "48000", at most 2 decimals.
+ *  (Safari empties a type="number" box on a comma, so amount boxes are text + inputMode="decimal".) */
+export const amountText = (v) => {
+  const s = String(v ?? '').replace(/[^\d.]/g, '');
+  const dot = s.indexOf('.');
+  return dot < 0 ? s : `${s.slice(0, dot + 1)}${s.slice(dot + 1).replace(/\./g, '').slice(0, 2)}`;
+};
+
 /** ₹ for the screen */
 export const money = (v) => {
   const n = round2(v);

@@ -13,7 +13,7 @@ import { IdProofView } from '../components/IdProof';
 import PaymentForm from '../components/PaymentForm';
 import { deleteSale, setSaleHidden } from '../lib/db';
 import { accountName } from '../lib/ledger';
-import { returnableSaleLines, returnOf } from '../lib/returns';
+import { returnableSaleLines, returnOf, settledByReturn } from '../lib/returns';
 import { money, num, round2, fmtDate, amountInWords } from '../lib/format';
 
 export default function SaleView() {
@@ -151,7 +151,7 @@ export default function SaleView() {
               <div className="row" style={{ justifyContent: 'flex-end', gap: 6 }}>
                 {s.hidden && <span className="chip solid">Private</span>}
                 {notes.length > 0 && <span className="chip plain">{s.returnedCount >= s.items.length ? 'Returned' : `${s.returnedCount} returned`}</span>}
-                {due > 0 ? <span className="chip caution">Due {money(due)}</span> : due < -0.004 ? <span className="chip caution">Refund owed {money(-due)}</span> : <span className="chip success">Paid</span>}
+                {due > 0 ? <span className="chip caution">Due {money(due)}</span> : due < -0.004 ? <span className="chip caution">Refund owed {money(-due)}</span> : <span className="chip success">{settledByReturn(s) ? 'Settled' : 'Paid'}</span>}
               </div>
               <div className="muted small" style={{ marginTop: 6 }}>{s.mode} · {accountName(accounts, s.accountId)}</div>
             </div>
@@ -226,6 +226,8 @@ export default function SaleView() {
                   <div><span className="muted">Refunded</span><span className="num">{money(s.refunded)}</span></div>
                 </>
               )}
+              {num(s.creditUsed) > 0 && <div><span className="muted">Credit used on other bills</span><span className="num">{money(s.creditUsed)}</span></div>}
+              {num(s.credit) > 0 && <div><span className="muted">Return credit adjusted</span><span className="num">{money(s.credit)}</span></div>}
               {due < -0.004 ? (
                 <div><b>Refund owed</b><b className="num">{money(-due)}</b></div>
               ) : (

@@ -145,9 +145,9 @@ export default function ReturnView() {
           </div>
           <div className="kpi"><div className="kpi-label">{sale ? 'Total credit' : 'Total debit'}</div><div className="kpi-value">{money(n.total)}</div><div className="kpi-sub">{n.items.length} phone(s)</div></div>
           <div className="kpi">
-            <div className="kpi-label">{sale ? 'Refunded' : 'Refund received'}</div>
+            <div className="kpi-label">{sale ? 'Cash refunded' : 'Cash back received'}</div>
             <div className="kpi-value">{money(refunded)}</div>
-            <div className="kpi-sub">{num(n.total) - refunded > 0.004 ? `${money(num(n.total) - refunded)} adjusted in account` : 'Fully refunded'}</div>
+            <div className="kpi-sub">{num(n.total) - refunded > 0.004 ? `${money(num(n.total) - refunded)} adjusted against ${n.billNo}` : 'Fully refunded'}</div>
           </div>
         </div>
 
@@ -211,7 +211,10 @@ export default function ReturnView() {
                   </tbody>
                 </table>
               ) : (
-                <p className="muted small">No refund - the full amount is adjusted in {n.partyName}'s account.</p>
+                <p className="muted small">
+                  No {sale ? 'cash refund' : 'cash back'} - the full {money(n.total)} is adjusted against {n.billNo}
+                  {sale ? ` (it comes off what ${n.partyName} owes on it).` : ` (it comes off what you owe ${n.partyName} on it).`}
+                </p>
               )}
               {n.notes && <p className="small"><span className="muted">Notes:</span> {n.notes}</p>}
             </div>
@@ -230,13 +233,25 @@ export default function ReturnView() {
                 </>
               )}
               <div className="grand"><span>Total</span><span className="num">{money(n.total)}</span></div>
-              <div><span className="muted">{sale ? 'Refunded' : 'Refund received'}</span><span className="num">{money(refunded)}</span></div>
-              <div><b>Adjusted in account</b><b className="num">{money(Math.max(0, num(n.total) - refunded))}</b></div>
+              <div><span className="muted">{sale ? 'Cash refunded' : 'Cash back received'}</span><span className="num">{money(refunded)}</span></div>
+              <div><b>Adjusted against {n.billNo}</b><b className="num">{money(Math.max(0, num(n.total) - refunded))}</b></div>
+              {bill && (
+                <div className="totals-sep">
+                  <span className="muted">{n.billNo} now</span>
+                  <span className="num">
+                    {num(bill.due) > 0.004
+                      ? `${sale ? 'due' : 'to pay'} ${money(bill.due)}`
+                      : num(bill.due) < -0.004
+                        ? `${sale ? 'refund owed' : 'supplier owes you'} ${money(-num(bill.due))}`
+                        : 'settled'}
+                  </span>
+                </div>
+              )}
               {canProfit &&
                 (sale ? (
                   <div><span className="muted">Profit taken back</span><span className="num">{money(n.profit)}</span></div>
                 ) : (
-                  <div><span className="muted">{num(n.profit) >= 0 ? 'Gain on return' : 'Loss on return'}</span><span className="num">{money(Math.abs(num(n.profit)))}</span></div>
+                  <div><span className="muted">{num(n.profit) > 0.004 ? 'Gain on return' : num(n.profit) < -0.004 ? 'Loss on return' : 'No gain or loss'}</span><span className="num">{money(Math.abs(num(n.profit)))}</span></div>
                 ))}
             </div>
           </div>

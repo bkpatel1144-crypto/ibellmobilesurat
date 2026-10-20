@@ -137,7 +137,7 @@ export default function Returns() {
         <div className="kpis">
           <Kpi inverse icon={Undo2} label="Sales returns" value={money(sum('sale'))} sub={`${count('sale')} phone(s) back from customers`} />
           <Kpi icon={Redo2} label="Purchase returns" value={money(sum('purchase'))} sub={`${count('purchase')} phone(s) back to suppliers`} />
-          <Kpi label={sale ? 'Refunded (this list)' : 'Refund received (this list)'} value={money(tot.refund)} sub={`${money(tot.total - tot.refund)} adjusted in accounts`} />
+          <Kpi label={sale ? 'Refunded (this list)' : 'Refund received (this list)'} value={money(tot.refund)} sub={`${money(tot.total - tot.refund)} adjusted against bills`} />
         </div>
         <section className="card card-lg">
           <div className="toolbar">

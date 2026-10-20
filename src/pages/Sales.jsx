@@ -12,6 +12,7 @@ import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/F
 import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
 import { money, num, fmtDate, inRange, byDateDesc, round2 } from '../lib/format';
+import { settledByReturn } from '../lib/returns';
 
 export default function Sales() {
   const data = useData();
@@ -51,7 +52,7 @@ export default function Sales() {
   const tot = rows.reduce(
     (a, x) => ({
       total: a.total + num(x.total),
-      received: a.received + num(x.received) + num(x.advance),
+      received: a.received + num(x.received) + num(x.advance) + num(x.credit),
       due: a.due + num(x.due),
       returned: a.returned + num(x.returned),
       profit: a.profit + num(x.profit),
@@ -98,7 +99,7 @@ export default function Sales() {
       devices: x.items.map((i) => `${i.brand} ${i.model} (${i.imei})`).join(', '),
       mode: x.mode,
       total: x.total,
-      received: num(x.received) + num(x.advance),
+      received: num(x.received) + num(x.advance) + num(x.credit),
       returned: x.returned || '',
       due: round2(num(x.due)),
       profit: x.profit,
@@ -191,7 +192,7 @@ export default function Sales() {
                       <td className="num">
                         <div className="row" style={{ gap: 4, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
                           {x.returnedCount > 0 && <span className="chip plain" title={`${money(x.returned)} returned`}>{x.returnedCount >= x.items.length ? 'Returned' : `${x.returnedCount} returned`}</span>}
-                          {due > 0 ? <span className="chip caution">Due {money(due)}</span> : due < -0.004 ? <span className="chip caution">Refund {money(-due)}</span> : <span className="chip success">Paid</span>}
+                          {due > 0 ? <span className="chip caution">Due {money(due)}</span> : due < -0.004 ? <span className="chip caution">Refund {money(-due)}</span> : <span className="chip success">{settledByReturn(x) ? 'Settled' : 'Paid'}</span>}
                         </div>
                       </td>
                       <td className="actions">

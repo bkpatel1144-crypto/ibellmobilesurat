@@ -12,6 +12,7 @@ import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/F
 import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
 import { money, num, fmtDate, inRange, byDateDesc, round2 } from '../lib/format';
+import { settledByReturn } from '../lib/returns';
 
 export default function Purchases() {
   const data = useData();
@@ -56,7 +57,7 @@ export default function Purchases() {
   }, [purchases, range, q]);
 
   const tot = rows.reduce(
-    (a, p) => ({ total: a.total + num(p.total), paid: a.paid + num(p.paid) + num(p.advance), due: a.due + num(p.due), devices: a.devices + p.items.length }),
+    (a, p) => ({ total: a.total + num(p.total), paid: a.paid + num(p.paid) + num(p.advance) + num(p.credit), due: a.due + num(p.due), devices: a.devices + p.items.length }),
     { total: 0, paid: 0, due: 0, devices: 0 },
   );
 
@@ -80,7 +81,7 @@ export default function Purchases() {
       party: p.partyName,
       devices: p.items.map((i) => `${i.brand} ${i.model} (${i.imei})`).join(', '),
       total: p.total,
-      paid: num(p.paid) + num(p.advance),
+      paid: num(p.paid) + num(p.advance) + num(p.credit),
       due: round2(num(p.due)),
     })),
     foot: { date: 'Total', no: '', party: '', devices: `${tot.devices} devices`, total: tot.total, paid: tot.paid, due: tot.due },
@@ -94,7 +95,7 @@ export default function Purchases() {
       (p) => p.partyName,
       (p) => p.items.map((i) => `${i.brand} ${i.model}`).join(', '),
       (p) => num(p.total),
-      (p) => num(p.paid) + num(p.advance),
+      (p) => num(p.paid) + num(p.advance) + num(p.credit),
       (p) => round2(num(p.due)),
     ],
   });
@@ -150,11 +151,11 @@ export default function Purchases() {
                         {p.items.length > 2 && <span className="muted"> +{p.items.length - 2} more</span>}
                       </td>
                       <td className="num cell-main">{money(p.total)}</td>
-                      <td className="num">{money(num(p.paid) + num(p.advance))}{num(p.advance) > 0 && <div className="cell-sub">incl. advance</div>}</td>
+                      <td className="num">{money(num(p.paid) + num(p.advance) + num(p.credit))}{num(p.advance) + num(p.credit) > 0 && <div className="cell-sub">incl. {num(p.advance) > 0 && num(p.credit) > 0 ? 'advance + credit' : num(p.advance) > 0 ? 'advance' : 'return credit'}</div>}</td>
                       <td className="num">
                         <div className="row" style={{ gap: 4, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
                           {p.returnedCount > 0 && <span className="chip plain" title={`${money(p.returned)} returned`}>{p.returnedCount >= p.items.length ? 'Returned' : `${p.returnedCount} returned`}</span>}
-                          {due > 0 ? <span className="chip caution">{money(due)}</span> : due < -0.004 ? <span className="chip caution">Refund due {money(-due)}</span> : <span className="chip success">Paid</span>}
+                          {due > 0 ? <span className="chip caution">{money(due)}</span> : due < -0.004 ? <span className="chip caution">Refund due {money(-due)}</span> : <span className="chip success">{settledByReturn(p) ? 'Settled' : 'Paid'}</span>}
                         </div>
                       </td>
                       <td className="actions">

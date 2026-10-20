@@ -50,6 +50,9 @@ export function returnablePurchaseLines(purchase, devices) {
   });
 }
 
+/** A bill with nothing left to pay that was cleared by returns alone (no money paid / received). */
+export const settledByReturn = (bill) => (num(bill.returned) > 0 || num(bill.credit) > 0) && !num(bill.received ?? bill.paid) && !num(bill.advance);
+
 /** Device ids already on a return note of this bill. */
 export const returnedIds = (returns, billId) =>
   new Set(returns.filter((r) => r.billId === billId).flatMap((r) => r.items.map((i) => i.deviceId)));
@@ -100,9 +103,17 @@ export function returnTotals(kind, bill, lines) {
  * The refund that settles things: what the bill still owes after this note decides.
  * Sale with ₹10,000 due and a ₹6,000 return → no refund, the due drops to ₹4,000.
  * Paid-in-full sale with a ₹6,000 return → refund ₹6,000.
+ * partyDue: what the party's bills of this kind still owe in all (credit on one bill settles their
+ * other open bills first), so cash only goes back for credit no open bill can take.
  */
-export function suggestedRefund(kind, bill, noteTotal) {
+export function suggestedRefund(kind, bill, noteTotal, partyDue = bill.due) {
   if (kind === 'sale' && !bill.partyId) return noteTotal; // walk-in: no account to keep a balance on
-  const after = num(bill.due) - noteTotal;
+  const after = num(partyDue) - noteTotal;
   return round2(Math.min(noteTotal, Math.max(0, -after)));
+}
+
+/** The party's other bills of this kind (sales or purchases) that still have money due. */
+export function otherOpenDue(bills, bill) {
+  if (!bill.partyId) return 0;
+  return round2(bills.filter((b) => b.id !== bill.id && b.partyId === bill.partyId && num(b.due) > 0.004).reduce((s, b) => s + num(b.due), 0));
 }

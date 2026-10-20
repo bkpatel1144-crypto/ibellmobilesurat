@@ -1,4 +1,5 @@
 import { money, num, fmtDate } from './format';
+import { settledByReturn } from './returns';
 
 /*
  * WhatsApp sharing without a server.
@@ -40,7 +41,7 @@ export function saleMessage(s, settings) {
     date: fmtDate(s.date),
     items: items(s.items),
     total: money(s.total),
-    balance: due > 0.004 ? `Balance due: ${money(due)}` : due < -0.004 ? `Refund due to you: ${money(-due)}` : 'Paid in full. Thank you!',
+    balance: due > 0.004 ? `Balance due: ${money(due)}` : due < -0.004 ? `Refund due to you: ${money(-due)}` : settledByReturn(s) ? 'Settled by return.' : 'Paid in full. Thank you!',
   });
 }
 
@@ -53,7 +54,7 @@ export function purchaseMessage(p, settings) {
     date: fmtDate(p.date),
     items: items(p.items),
     total: money(p.total),
-    balance: due > 0.004 ? `Paid ${money(p.paid)} · balance ${money(due)}` : due < -0.004 ? `You owe us ${money(-due)} (returns)` : 'Paid in full.',
+    balance: due > 0.004 ? `Paid ${money(p.paid)} · balance ${money(due)}` : due < -0.004 ? `You owe us ${money(-due)} (returns)` : settledByReturn(p) ? 'Settled by return (debit note).' : 'Paid in full.',
   });
 }
 
@@ -69,7 +70,7 @@ export function returnMessage(n, settings, refunded = 0) {
     bill: n.billNo,
     items: items(n.items),
     total: money(n.total),
-    balance: `${sale ? 'Refunded' : 'Refund received'}: ${money(refunded)}${rest > 0.004 ? ` · ${money(rest)} adjusted in your account` : ''}`,
+    balance: `${sale ? 'Refunded' : 'Refund received'}: ${money(refunded)}${rest > 0.004 ? ` · ${money(rest)} adjusted against bill ${n.billNo}` : ''}`,
   });
 }
 

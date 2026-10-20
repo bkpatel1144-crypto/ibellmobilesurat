@@ -216,6 +216,34 @@ function withSettlement(d) {
     return { ...s, ...x, received: rc, due: round2(num(s.total) - x.returned - rc + x.refunded) };
   });
 
+  // Return credit: a bill that was paid and then had phones returned (not all refunded) leaves the
+  // party in credit. As with Tally (Agst Ref), Zoho ("apply credits") and ERPNext (allocate credit note),
+  // that credit settles the same party's other open bills, oldest first; only what is left stays on
+  // the returned bill as "refund owed" / "supplier owes you".
+  //   source bill: creditUsed (moved to other bills) · target bill: credit (return credit adjusted)
+  const applyCredit = (bills) => {
+    const byParty = new Map();
+    for (const b of bills) if (b.partyId) byParty.set(b.partyId, [...(byParty.get(b.partyId) || []), b]);
+    for (const list of byParty.values()) {
+      const order = list.sort((a, b) => (a.date || '').localeCompare(b.date || '') || tsOf(a) - tsOf(b));
+      const sources = order.filter((b) => b.due < -0.004);
+      if (!sources.length) continue;
+      for (const t of order) {
+        for (const s of sources) {
+          if (t.due <= 0.004) break;
+          if (s.due >= -0.004) continue;
+          const adj = round2(Math.min(-s.due, t.due));
+          s.due = round2(s.due + adj);
+          s.creditUsed = round2((s.creditUsed || 0) + adj);
+          t.due = round2(t.due - adj);
+          t.credit = round2((t.credit || 0) + adj);
+        }
+      }
+    }
+  };
+  applyCredit(purchases);
+  applyCredit(sales);
+
   // Advances: money paid / received "on account" (no bill chosen) settles the party's oldest open
   // bills first - after any opening balance it must clear - like Tally's "advance adjusted".
   // Paid out → purchases; received → sales. What is left stays as the party's advance.

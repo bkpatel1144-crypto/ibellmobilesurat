@@ -18,6 +18,15 @@ import { money, num, fmtDate, plain, byDateDesc, monthKey, fmtMonth, deviceName 
 import { TYPE_LABEL } from './Parties';
 import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
+import { settledByReturn } from '../lib/returns';
+
+/** Where one bill stands: still due, owed back, or done (cleared by a return alone = "Settled"). */
+function BillStatus({ bill, sale }) {
+  const due = Math.round(num(bill.due) * 100) / 100;
+  if (due > 0) return <span className="chip caution">{sale ? 'Due' : 'To pay'} {money(due)}</span>;
+  if (due < 0) return <span className="chip caution">{sale ? 'Refund' : 'Owes you'} {money(-due)}</span>;
+  return <span className="chip success">{settledByReturn(bill) ? 'Settled' : 'Paid'}</span>;
+}
 
 export default function PartyView() {
   const { id } = useParams();
@@ -71,11 +80,11 @@ export default function PartyView() {
   });
   const pgSales = usePaged(a.sales, {
     resetOn: [id],
-    sort: [(s) => s.date, (s) => s.invoiceNo, (s) => s.items.map((i) => `${i.brand} ${i.model}`).join(', '), (s) => num(s.total), ...(showProfit ? [(s) => num(s.profit)] : [])],
+    sort: [(s) => s.date, (s) => s.invoiceNo, (s) => s.items.map((i) => `${i.brand} ${i.model}`).join(', '), (s) => num(s.total), ...(showProfit ? [(s) => num(s.profit)] : []), (s) => num(s.due)],
   });
   const pgPurch = usePaged(a.purchases, {
     resetOn: [id],
-    sort: [(p) => p.date, (p) => p.purchaseNo, (p) => p.items.map((i) => `${i.brand} ${i.model}`).join(', '), (p) => num(p.total), (p) => num(p.paid)],
+    sort: [(p) => p.date, (p) => p.purchaseNo, (p) => p.items.map((i) => `${i.brand} ${i.model}`).join(', '), (p) => num(p.total), (p) => num(p.paid), (p) => num(p.due)],
   });
   const devCost = (d) => num(d.purchasePrice) + num(d.repairCost);
   const pgDevices = usePaged(a.fromThem, {
@@ -291,7 +300,7 @@ export default function PartyView() {
             (a.sales.length ? (
               <div className="table-wrap">
               <table className="table" {...pgSales.tableProps}>
-                <thead><tr><th>Date</th><th>Invoice</th><th>Devices</th><th className="num">Total</th>{showProfit && <th className="num">Profit</th>}</tr></thead>
+                <thead><tr><th>Date</th><th>Invoice</th><th>Devices</th><th className="num">Total</th>{showProfit && <th className="num">Profit</th>}<th>Status</th></tr></thead>
                 <tbody>
                   {pgSales.rows.map((s) => (
                     <tr key={s.id} className="clickable" onClick={() => navigate(`/sales/${s.id}`)}>
@@ -300,6 +309,7 @@ export default function PartyView() {
                       <td className="small">{s.items.map((i) => `${i.brand} ${i.model}`).join(', ')}</td>
                       <td className="num">{money(s.total)}</td>
                       {showProfit && <td className="num">{money(s.profit)}</td>}
+                      <td><BillStatus bill={s} sale /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -314,7 +324,7 @@ export default function PartyView() {
             (a.purchases.length ? (
               <div className="table-wrap">
               <table className="table" {...pgPurch.tableProps}>
-                <thead><tr><th>Date</th><th>No.</th><th>Devices</th><th className="num">Total</th><th className="num">Paid</th></tr></thead>
+                <thead><tr><th>Date</th><th>No.</th><th>Devices</th><th className="num">Total</th><th className="num">Paid</th><th>Status</th></tr></thead>
                 <tbody>
                   {pgPurch.rows.map((p) => (
                     <tr key={p.id} className="clickable" onClick={() => navigate(`/purchases/${p.id}`)}>
@@ -323,6 +333,7 @@ export default function PartyView() {
                       <td className="small">{p.items.map((i) => `${i.brand} ${i.model}`).join(', ')}</td>
                       <td className="num">{money(p.total)}</td>
                       <td className="num">{money(p.paid)}</td>
+                      <td><BillStatus bill={p} /></td>
                     </tr>
                   ))}
                 </tbody>

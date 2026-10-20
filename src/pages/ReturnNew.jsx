@@ -7,7 +7,7 @@ import { PageHeader } from '../components/Layout';
 import { Field, Segmented, Empty, SkeletonPage } from '../components/ui';
 import PaymentFields from '../components/PaymentFields';
 import { createReturn, updateReturn, CASH_ACCOUNT } from '../lib/db';
-import { REASONS, KIND_LABEL, NOTE_TITLE, returnTotals, returnableSaleLines, returnablePurchaseLines, returnOf, saleLineValue, suggestedRefund } from '../lib/returns';
+import { REASONS, KIND_LABEL, NOTE_TITLE, returnTotals, returnableSaleLines, returnablePurchaseLines, returnOf, saleLineValue, suggestedRefund, otherOpenDue } from '../lib/returns';
 import { money, num, round2, today, fmtDate, cleanImei, amountText } from '../lib/format';
 
 /** One form for a new return and for editing one; keyed so switching bills starts fresh. */
@@ -80,9 +80,34 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
     .map((it) => ({ ...it, cost: costOf(it), value: num(picked[it.deviceId]) }));
   const t = bill ? returnTotals(kind, bill, lines) : null;
   const walkIn = sale && bill && !bill.partyId;
-  const suggest = t ? suggestedRefund(kind, bill, t.total) : 0;
+  // where the bill stands before and after this note (due > 0: still owed to / by the shop).
+  // Credit left on this bill settles the party's other open bills first (see withSettlement).
+  const before = bill ? round2(num(bill.due)) : 0;
+  const others = bill && !editing ? otherOpenDue(bills, bill) : 0;
+  const suggest = t ? suggestedRefund(kind, bill, t.total, before + others) : 0;
   const refund = walkIn ? t?.total || 0 : f.refund === null ? suggest : num(f.refund);
   const party = bill ? (sale ? bill.customerName : bill.partyName) : '';
+  const own = round2(before - (t?.total || 0) + refund);
+  const toOthers = own < -0.004 ? round2(Math.min(-own, others)) : 0;
+  const after = round2(own + toOthers);
+  const balLabel = (v) => {
+    if (Math.abs(v) < 0.005) return 'settled';
+    if (sale) return v > 0 ? `${party || 'customer'} owes you` : `you owe ${party || 'customer'}`;
+    return v > 0 ? `you owe ${party}` : `${party} owes you`;
+  };
+  let refundHint = 'No account to keep a balance on';
+  if (!walkIn) {
+    if (!t?.total) refundHint = 'Tick a phone and enter its return value first';
+    else if (suggest > 0) {
+      refundHint = `Suggested ${money(suggest)}: ${sale ? 'they paid' : 'you paid'} more than ${sale ? 'they owe' : 'you owe'} now${others > 0.004 ? ` (after their other open bills of ${money(others)})` : ''}. Less stays as credit with them.`;
+    } else {
+      const here = Math.max(0, before);
+      const where = [here > 0.004 && `${money(here)} on this bill`, others > 0.004 && `${money(others)} on other bills`].filter(Boolean).join(' and ');
+      refundHint = sale
+        ? `They still owe ${where}, so no cash refund - the return comes off what they owe.`
+        : `You still owe ${where}, so no cash back - the return comes off what you owe.`;
+    }
+  }
 
   const pickBill = (b, deviceId) => {
     setBillId(b.id);
@@ -136,7 +161,7 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
     const errs = [];
     if (!lines.length) errs.push('Tick at least one phone to return.');
     for (const l of lines) {
-      if (!(l.value > 0)) errs.push(`${l.brand} ${l.model}: enter ${sale ? 'the return amount' : 'what the supplier gives back'} (above the phone, more than ₹0).`);
+      if (!(l.value > 0)) errs.push(`${l.brand} ${l.model}: enter its return value (more than ₹0 - usually ${sale ? 'its bill value' : 'the price you bought it for'}; cash back is separate).`);
       else if (sale && l.value > fullValue(l) + 0.004) errs.push(`${l.brand} ${l.model}: can't be more than its bill value ${money(fullValue(l))}.`);
     }
     if (!editing && t && refund > t.total + 0.004) errs.push('Refund is more than the return total.');
@@ -303,7 +328,11 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
                       </div>
                       {on && (
                         <div className="form-grid">
-                          <Field label={sale ? 'Return amount (₹)' : 'Supplier gives back (₹)'} required hint={sale ? (num(bill.tax) > 0 ? 'GST included · less than billed keeps a deduction' : 'Less than billed keeps a deduction') : 'What the supplier credits for this phone'}>
+                          <Field
+                            label="Return value (₹)"
+                            required
+                            hint={sale ? `Comes off the bill${num(bill.tax) > 0 ? ' · GST included' : ''} · not the cash refund` : 'Comes off what you owe them · not the cash back'}
+                          >
                             <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
                               <input
                                 className="input num"
@@ -316,12 +345,20 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
                               <button type="button" className="btn btn-sm" onClick={() => setPicked((p) => ({ ...p, [it.deviceId]: String(fullValue(it)) }))}>Full</button>
                             </div>
                           </Field>
-                          {canProfit && (
-                            <div className="small muted" style={{ alignSelf: 'center' }}>
-                              Cost {money(costOf(it))}
-                              {!sale && num(d?.repairCost) > 0 && ` (incl. repair ${money(d.repairCost)})`}
-                            </div>
-                          )}
+                          <div className="small muted" style={{ alignSelf: 'center' }}>
+                            {canProfit && (
+                              <div>
+                                Cost {money(costOf(it))}
+                                {!sale && num(d?.repairCost) > 0 && ` (incl. repair ${money(d.repairCost)})`}
+                              </div>
+                            )}
+                            {(() => {
+                              const diff = round2(num(picked[it.deviceId]) - fullValue(it));
+                              if (!(num(picked[it.deviceId]) > 0) || Math.abs(diff) < 0.005) return null;
+                              if (sale) return diff < 0 ? <div>{money(-diff)} kept as deduction</div> : null;
+                              return <div className={diff < 0 ? 'neg' : ''}>{money(Math.abs(diff))} {diff < 0 ? 'less' : 'more'} than you bought it for</div>;
+                            })()}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -370,10 +407,10 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
                   ) : (
                     <div className="sub-box">
                       <div className="field-label" style={{ marginBottom: 8 }}>
-                        {sale ? (walkIn ? 'Refund to customer (walk-in: full amount)' : `Refund to ${party} now`) : `Refund received from ${party} now`}
+                        {sale ? (walkIn ? 'Cash refund to customer (walk-in: full amount)' : `Cash refund to ${party} now`) : `Cash back from ${party} now`}
                       </div>
                       <div className="form-grid">
-                        <Field label="Amount (₹)" hint={walkIn ? 'No account to keep a balance on' : `Suggested ${money(suggest)} · the rest is adjusted in their account`}>
+                        <Field label="Amount (₹)" hint={refundHint}>
                           <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
                             <input
                               className="input num"
@@ -409,15 +446,18 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
                   <div className="grand"><span>{sale ? 'Total credit' : 'Total debit'}</span><span className="num">{money(t.total)}</span></div>
                   {!editing && (
                     <>
-                      <div><span className="muted">{sale ? 'Refund now' : 'Refund received now'}</span><span className="num">{money(refund)}</span></div>
-                      <div><span className="muted">Adjusted in account</span><span className="num">{money(Math.max(0, t.total - refund))}</span></div>
+                      <div className="totals-sep"><span className="muted">Bill now · {balLabel(before)}</span><span className="num">{money(Math.abs(before))}</span></div>
+                      <div><span className="muted">Less this return</span><span className="num">− {money(t.total)}</span></div>
+                      <div><span className="muted">{sale ? 'Cash refund now' : 'Cash back now'}</span><span className="num">{refund > 0 ? '+ ' : ''}{money(refund)}</span></div>
+                      {toOthers > 0 && <div><span className="muted">Goes against other open bills</span><span className="num">{money(toOthers)}</span></div>}
+                      <div className="after"><span>After · {balLabel(after)}</span><span className="num">{money(Math.abs(after))}</span></div>
                     </>
                   )}
                   {canProfit && lines.length > 0 && (
                     sale ? (
                       <div><span className="muted">Profit taken back</span><span className="num">{money(t.profit)}</span></div>
                     ) : (
-                      <div><span className="muted">{t.profit >= 0 ? 'Gain on return' : 'Loss on return'}</span><span className={`num ${t.profit < 0 ? 'neg' : 'pos'}`}>{money(Math.abs(t.profit))}</span></div>
+                      <div><span className="muted">{t.profit > 0.004 ? 'Gain on return' : t.profit < -0.004 ? 'Loss on return' : 'No gain or loss'}</span><span className={`num ${t.profit < 0 ? 'neg' : 'pos'}`}>{money(Math.abs(t.profit))}</span></div>
                     )
                   )}
                 </div>

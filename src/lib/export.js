@@ -343,6 +343,13 @@ export async function invoicePdf(sale, settings, { action = 'download' } = {}) {
       doc.text(moneyPdf(sale.refunded), W - M, ty, { align: 'right' });
     }
   }
+  // return credit moved between this customer's bills (see withSettlement)
+  for (const [label, v] of [['Credit used on other bills', sale.creditUsed], ['Return credit adjusted', sale.credit]]) {
+    if (!(num(v) > 0)) continue;
+    ty += 5.5;
+    doc.text(label, W - 80, ty);
+    doc.text(moneyPdf(v), W - M, ty, { align: 'right' });
+  }
   const due = sale.due ?? num(sale.total) - num(sale.received);
   if (due > 0.004) {
     ty += 5.5;
@@ -450,7 +457,7 @@ export async function returnNotePdf(note, settings, { refunded = 0, output = 'sa
         : []),
       [sale ? 'Total credit' : 'Total debit', rs(note.total)],
       [sale ? 'Refunded' : 'Refund received', rs(refunded)],
-      ...(Math.abs(adjusted) > 0.004 ? [['Adjusted in account', rs(adjusted)]] : []),
+      ...(Math.abs(adjusted) > 0.004 ? [[`Adjusted against ${note.billNo}`, rs(adjusted)]] : []),
     ],
     filename: note.returnNo,
   });
@@ -490,6 +497,8 @@ export function purchaseVoucherPdf(p, settings, { output = 'save' } = {}) {
       ['Paid', `Rs. ${plain(p.paid)}`],
       ...(num(p.advance) > 0 ? [['Advance adjusted', `Rs. ${plain(p.advance)}`]] : []),
       ...(num(p.returned) > 0 ? [['Returned (debit notes)', `- Rs. ${plain(p.returned)}`], ['Refund received', `Rs. ${plain(p.refunded)}`]] : []),
+      ...(num(p.creditUsed) > 0 ? [['Credit used on other purchases', `Rs. ${plain(p.creditUsed)}`]] : []),
+      ...(num(p.credit) > 0 ? [['Return credit adjusted', `Rs. ${plain(p.credit)}`]] : []),
       [due < -0.004 ? 'Supplier owes' : 'Balance', `Rs. ${plain(Math.abs(due))}`],
     ],
     filename: p.purchaseNo,

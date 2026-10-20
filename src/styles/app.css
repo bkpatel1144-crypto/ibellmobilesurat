@@ -1835,6 +1835,16 @@ table.table {
   padding-top: var(--space-2);
 }
 
+.totals .totals-sep {
+  border-top: 1px dashed var(--color-outline);
+  padding-top: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.totals .after {
+  font-weight: 700;
+}
+
 .totals .input {
   width: 140px;
   height: 36px;

@@ -13,6 +13,7 @@ import { usePaged } from '../lib/usePaged';
 import SendRepairModal from '../components/SendRepairModal';
 import { updateDevice, deleteDevice, deletePurchase } from '../lib/db';
 import { money, num, fmtDate, deviceName } from '../lib/format';
+import { accLines } from '../lib/accessories';
 
 export default function Stock() {
   const data = useData();
@@ -32,7 +33,7 @@ export default function Stock() {
   /** Only a phone still in stock can go; the last phone of a purchase takes the purchase with it. */
   const remove = async (d) => {
     const purchase = data.raw.purchases.find((p) => p.id === d.purchaseId);
-    const last = !purchase || purchase.items.length <= 1;
+    const last = !purchase || (purchase.items.length <= 1 && !accLines(purchase).length);
     const ok = await confirm({
       title: `Delete ${deviceName(d)}?`,
       message: last
@@ -43,7 +44,7 @@ export default function Stock() {
     });
     if (!ok) return;
     try {
-      if (last && purchase) await deletePurchase(purchase, data.raw);
+      if (last && purchase) await deletePurchase(purchase, { ...data.raw, accStock: data.rawAccStock });
       else await deleteDevice(d, purchase, data.raw.repairs);
       toast('Phone deleted');
     } catch (e) {

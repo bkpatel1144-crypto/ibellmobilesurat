@@ -21,8 +21,9 @@ export const KIND_LABEL = { sale: 'Sales return', purchase: 'Purchase return' };
 /** What the customer paid for one line: its share of the bill after discount, GST included. */
 export function saleLineValue(sale, it) {
   if (it.taxable != null) return round2(num(it.taxable) + num(it.gst));
+  const price = num(it.price ?? it.amount); // phones: price · accessory lines: amount
   const sub = num(sale.subtotal) || sale.items.reduce((s, i) => s + num(i.price), 0);
-  return round2(sub ? (num(it.price) * num(sale.total)) / sub : num(it.price));
+  return round2(sub ? (price * num(sale.total)) / sub : price);
 }
 
 function saleLineTaxable(sale, it) {
@@ -69,7 +70,7 @@ export const lineMax = (kind, bill, it) => (kind === 'sale' ? saleLineValue(bill
  * Sales: GST comes off in the same share as the value (a full return reverses all of that line's GST).
  * Purchases carry no GST in this app (phones are mostly bought from individuals).
  */
-export function returnTotals(kind, bill, lines) {
+export function returnTotals(kind, bill, lines, accessoryLines = []) {
   const items = lines.map((l) => {
     const value = round2(l.value);
     if (kind !== 'sale') return { ...l, value, taxable: value, gst: 0 };
@@ -78,15 +79,28 @@ export function returnTotals(kind, bill, lines) {
     const taxable = num(bill.tax) > 0 && billed ? round2((lineTaxable * value) / billed) : value;
     return { ...l, billed, value, taxable, gst: round2(value - taxable) };
   });
-  const total = round2(items.reduce((s, i) => s + i.value, 0));
-  const taxable = round2(items.reduce((s, i) => s + i.taxable, 0));
+  // accessory lines: { ...billLine (whole line: amount, taxable, gst), qty returned, billQty, serials, value, cost }
+  const accessories = accessoryLines.map((l) => {
+    const value = round2(l.value);
+    const share = num(l.billQty) ? Math.min(1, num(l.qty) / num(l.billQty)) : 1;
+    const { billQty, ...line } = l;
+    if (kind !== 'sale') return { ...line, value, taxable: value, gst: 0 };
+    const billed = round2(saleLineValue(bill, l) * share);
+    const lineTaxable = round2(saleLineTaxable(bill, l) * share);
+    const taxable = num(bill.tax) > 0 && billed ? round2((lineTaxable * value) / billed) : value;
+    return { ...line, billed, value, taxable, gst: round2(value - taxable) };
+  });
+  const all = [...items, ...accessories];
+  const total = round2(all.reduce((s, i) => s + i.value, 0));
+  const taxable = round2(all.reduce((s, i) => s + i.taxable, 0));
   const tax = round2(total - taxable);
   const igst = num(bill.igst) > 0 ? tax : 0;
   const cgst = igst ? 0 : round2(tax / 2);
   const sgst = igst ? 0 : round2(tax - cgst);
-  const cost = round2(items.reduce((s, i) => s + num(i.cost), 0));
+  const cost = round2(all.reduce((s, i) => s + num(i.cost), 0));
   return {
     items,
+    accessories,
     total,
     taxable,
     tax,

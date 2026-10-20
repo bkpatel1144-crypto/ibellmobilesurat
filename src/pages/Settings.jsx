@@ -1086,7 +1086,7 @@ function AddMember({ open, onClose, existing }) {
 
 const DATA_SETS = [
   ['sales', 'Bills'], ['purchases', 'Purchases'], ['returns', 'Returns'], ['devices', 'Devices'], ['payments', 'Payments'], ['expenses', 'Expenses'],
-  ['parties', 'Parties'], ['repairs', 'Repairs'], ['banks', 'Bank accounts'], ['audits', 'Stock audits'], ['team', 'Team'],
+  ['parties', 'Parties'], ['repairs', 'Repairs'], ['banks', 'Bank accounts'], ['audits', 'Stock audits'], ['team', 'Team'], ['accessories', 'Accessories'], ['stockAdjustments', 'Stock adjustments'],
 ];
 
 function DataTab() {

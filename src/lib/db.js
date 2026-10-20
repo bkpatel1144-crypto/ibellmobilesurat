@@ -16,6 +16,7 @@ import { db, auth } from '../firebase';
 import { num, round2, cleanImei, deviceName, today } from './format';
 import { billTotals, splitGst, spreadLines } from './gst';
 import { returnTotals } from './returns';
+import { accLines, cleanSerial, lineQty, lineCost, accReturned, categoryHsn, billCountText } from './accessories';
 
 export const CASH_ACCOUNT = 'cash';
 
@@ -162,9 +163,194 @@ export function logActivity({ action, entity, refId = null, refNo = '', amount =
   else setDoc(ref, data).catch(() => {}); // a missing log entry must never block the real work
 }
 
+/* ------------------------------------------------------------------ accessories */
+// Stock checks always use the TRUE stock (accStock worked out from the unlocked data), so a
+// locked screen can never oversell, or delete stock that was sold on a private bill.
+
+const accName = (a) => a?.name || 'Accessory';
+const pieces = (n) => `${n} piece${n === 1 ? '' : 's'}`;
+
+/** SERIAL → accessoryId for every accessory serial that is in stock right now. */
+function serialsInStock(accStock) {
+  const m = new Map();
+  for (const [id, st] of accStock || []) for (const [k, v] of st.serials) if (v.count > 0) m.set(k, id);
+  return m;
+}
+
+/** Clean purchase lines (one per accessory) from the form. */
+function purchaseAccLines(list, accById) {
+  const out = [];
+  const seen = new Set();
+  for (const l of list || []) {
+    const a = accById.get(l.accessoryId);
+    if (!a) throw new Error('An accessory on this bill no longer exists.');
+    if (seen.has(a.id)) throw new Error(`${accName(a)} is added twice - use one line with the full quantity.`);
+    seen.add(a.id);
+    const serial = a.track === 'serial';
+    const serials = serial ? [...new Set((l.serials || []).map(cleanSerial).filter(Boolean))] : [];
+    const qty = serial ? serials.length : Math.round(num(l.qty));
+    if (qty <= 0) throw new Error(`${accName(a)}: ${serial ? 'scan or type at least one serial number' : 'enter the quantity'}.`);
+    const rate = round2(l.rate);
+    if (rate < 0) throw new Error(`${accName(a)}: the rate can't be negative.`);
+    out.push({
+      accessoryId: a.id,
+      name: accName(a),
+      brand: a.brand || '',
+      category: a.category || '',
+      code: a.code || '',
+      hsn: a.hsn || categoryHsn(a.category),
+      track: serial ? 'serial' : 'qty',
+      qty,
+      rate,
+      amount: round2(qty * rate),
+      serials,
+    });
+  }
+  return out;
+}
+
+/** New serials must not already be in stock (on this or any other accessory). */
+function checkNewSerials(lines, accStock, accById, own = new Set()) {
+  const live = serialsInStock(accStock);
+  for (const l of lines) {
+    for (const s of l.serials) {
+      if (own.has(s)) continue;
+      if (live.has(s)) throw new Error(`Serial ${s} is already in stock (${accName(accById.get(live.get(s)))}).`);
+    }
+  }
+}
+
+/** Creates or edits an accessory in the catalogue (with its opening stock). */
+export async function saveAccessory(a, { accessories, settings, accStock }) {
+  const name = (a.name || '').trim();
+  if (!name) throw new Error('Enter the accessory name.');
+  const track = a.track === 'serial' ? 'serial' : 'qty';
+  const old = a.id ? accessories.find((x) => x.id === a.id) : null;
+  const st = a.id ? accStock?.get(a.id) : null;
+  const used = Boolean(st && (st.purchasedQty || st.soldQty || st.serials.size > (old?.openingSerials || []).length));
+  if (old && (old.track === 'serial' ? 'serial' : 'qty') !== track && used) throw new Error('Tracking (serial / quantity) can’t be changed after the item is on a bill.');
+
+  let code = (a.code || '').trim().toUpperCase();
+  const others = accessories.filter((x) => x.id !== a.id);
+  const clash = code && others.find((x) => (x.code || '').toUpperCase() === code);
+  if (clash) throw new Error(`Code ${code} is already used by ${clash.name}.`);
+  if (!code) code = await nextNumber('accessory', settings?.accCodePrefix || 'AC-', accessories.map((x) => x.code));
+
+  const openingSerials = track === 'serial' ? [...new Set((a.openingSerials || []).map(cleanSerial).filter(Boolean))] : [];
+  const openingQty = track === 'serial' ? openingSerials.length : Math.max(0, Math.round(num(a.openingQty)));
+  const live = serialsInStock(accStock);
+  const oldSerials = new Set((old?.openingSerials || []).map(cleanSerial));
+  for (const s of openingSerials) {
+    if (oldSerials.has(s)) continue;
+    if (live.has(s)) throw new Error(`Serial ${s} is already in stock.`);
+  }
+  if (old && st) {
+    // lowering the opening stock below what has already been sold is not possible
+    if (track === 'qty' && st.qty - (Math.round(num(old.openingQty)) - openingQty) < 0) {
+      throw new Error(`Only ${pieces(Math.max(0, st.qty))} left in stock - the opening stock can go down by at most that much.`);
+    }
+    const keep = new Set(openingSerials);
+    for (const s of oldSerials) if (!keep.has(s) && !(st.serials.get(s)?.count > 0)) throw new Error(`Serial ${s} is already sold - it can't be removed from the opening stock.`);
+  }
+
+  const data = {
+    name,
+    brand: (a.brand || '').trim(),
+    category: a.category || 'Other',
+    hsn: (a.hsn || '').trim() || categoryHsn(a.category),
+    track,
+    code,
+    purchasePrice: round2(a.purchasePrice),
+    salePrice: round2(a.salePrice),
+    warranty: (a.warranty || '').trim(),
+    lowStock: Math.max(0, Math.round(num(a.lowStock))),
+    notes: (a.notes || '').trim(),
+    openingQty,
+    openingCost: round2(a.openingCost ?? a.purchasePrice),
+    openingSerials,
+    openingDate: a.openingDate || today(),
+  };
+  if (a.id) {
+    await updateDoc(doc(db, 'accessories', a.id), { ...data, updatedAt: serverTimestamp(), updatedBy: who() });
+    logActivity({ action: 'update', entity: 'accessory', refId: a.id, refNo: code, note: name });
+    return { id: a.id, code };
+  }
+  const ref = newRef('accessories');
+  await setDoc(ref, { ...data, ...stamp() });
+  logActivity({ action: 'create', entity: 'accessory', refId: ref.id, refNo: code, note: `${name}${openingQty ? ` · opening ${pieces(openingQty)}` : ''}` });
+  return { id: ref.id, code };
+}
+
+/** Deletes an accessory that was never used on a bill or adjustment. */
+export async function deleteAccessory(a, raw) {
+  const onBill = [...raw.purchases, ...raw.sales, ...raw.returns].find((d) => accLines(d).some((l) => l.accessoryId === a.id));
+  if (onBill) throw new Error(`${accName(a)} is on ${onBill.purchaseNo || onBill.invoiceNo || onBill.returnNo} - it can't be deleted.`);
+  if (raw.stockAdjustments.some((x) => x.accessoryId === a.id)) throw new Error(`${accName(a)} has stock adjustments - delete those first.`);
+  await deleteDoc(doc(db, 'accessories', a.id));
+  logActivity({ action: 'delete', entity: 'accessory', refId: a.id, refNo: a.code || '', note: accName(a) });
+}
+
+/**
+ * Stock adjustment: damaged / lost (qty < 0) or found / count correction (qty > 0).
+ * Serial items name the exact serials.
+ */
+export async function saveAdjustment({ accessory, date, direction, qty, serials, reason, note }, { accStock }) {
+  const st = accStock.get(accessory.id);
+  const serial = accessory.track === 'serial';
+  const list = serial ? [...new Set((serials || []).map(cleanSerial).filter(Boolean))] : [];
+  const n = serial ? list.length : Math.round(num(qty));
+  if (n <= 0) throw new Error(serial ? 'Pick or type at least one serial number.' : 'Enter the quantity.');
+  const out = direction !== 'in';
+  if (out) {
+    if (!st || n > st.qty) throw new Error(`Only ${pieces(Math.max(0, st?.qty || 0))} in stock.`);
+    for (const s of list) if (!(st.serials.get(s)?.count > 0)) throw new Error(`Serial ${s} is not in stock.`);
+  } else {
+    const live = serialsInStock(accStock);
+    for (const s of list) if (live.has(s)) throw new Error(`Serial ${s} is already in stock.`);
+  }
+  const cost = round2(st?.avgCost ?? accessory.purchasePrice);
+  const ref = newRef('stockAdjustments');
+  const batch = writeBatch(db);
+  batch.set(ref, {
+    accessoryId: accessory.id,
+    name: accName(accessory),
+    date: date || today(),
+    qty: out ? -n : n,
+    serials: list,
+    reason: reason || '',
+    note: (note || '').trim(),
+    cost,
+    value: round2(cost * n),
+    ...stamp(),
+  });
+  logActivity({ action: out ? 'stock-out' : 'stock-in', entity: 'accessory', refId: accessory.id, refNo: accessory.code || '', amount: round2(cost * n), note: `${accName(accessory)} · ${out ? '−' : '+'}${n} · ${reason || 'adjustment'}` }, batch);
+  await batch.commit();
+}
+
+export async function deleteAdjustment(adj, { accStock }) {
+  const n = Math.round(num(adj.qty));
+  const st = accStock.get(adj.accessoryId);
+  if (n > 0) {
+    // taking back pieces that were added - they must still be in stock
+    if (!st || st.qty < n) throw new Error('Those pieces are already sold - this adjustment can’t be removed.');
+    for (const s of adj.serials || []) if (!(st.serials.get(cleanSerial(s))?.count > 0)) throw new Error(`Serial ${s} is already sold - this adjustment can’t be removed.`);
+  } else {
+    const live = serialsInStock(accStock);
+    for (const s of adj.serials || []) if (live.has(cleanSerial(s))) throw new Error(`Serial ${s} is in stock again - this adjustment can’t be removed.`);
+  }
+  const batch = writeBatch(db);
+  batch.delete(doc(db, 'stockAdjustments', adj.id));
+  logActivity({ action: 'delete', entity: 'adjustment', refId: adj.accessoryId, refNo: '', amount: adj.value ?? null, note: `${adj.name} · ${n > 0 ? '+' : ''}${n} · ${adj.reason || ''}` }, batch);
+  await batch.commit();
+}
+
 /* ------------------------------------------------------------------ purchases */
 
-export async function createPurchase(form, { settings, purchases, devices = [] }) {
+export async function createPurchase(form, { settings, purchases, devices = [], accessories = [], accStock = new Map() }) {
+  const accById = new Map(accessories.map((a) => [a.id, a]));
+  const acc = purchaseAccLines(form.accessories, accById);
+  if (!form.items.length && !acc.length) throw new Error('Add at least one phone or accessory.');
+  checkNewSerials(acc, accStock, accById);
   const prefix = settings?.purchasePrefix || 'PUR-';
   const purchaseNo = await nextNumber('purchase', prefix, purchases.map((p) => p.purchaseNo));
   const sns = await allocateSerials(form.items.length, settings, devices);
@@ -247,7 +433,7 @@ export async function createPurchase(form, { settings, purchases, devices = [] }
     }
   }
 
-  const subtotal = round2(lines.reduce((s, l) => s + num(l.price), 0));
+  const subtotal = round2(lines.reduce((s, l) => s + num(l.price), 0) + acc.reduce((s, l) => s + l.amount, 0));
   const total = round2(subtotal + num(form.otherCharges) - num(form.discount));
   const paid = round2(Math.min(num(form.paid), total));
 
@@ -258,6 +444,7 @@ export async function createPurchase(form, { settings, purchases, devices = [] }
     partyId: form.partyId,
     partyName: form.partyName,
     items: lines,
+    accessories: acc,
     subtotal,
     otherCharges: round2(form.otherCharges),
     discount: round2(form.discount),
@@ -289,14 +476,22 @@ export async function createPurchase(form, { settings, purchases, devices = [] }
   }
 
   logActivity(
-    { action: 'create', entity: 'purchase', refId: pRef.id, refNo: purchaseNo, amount: total, note: `${lines.length} device(s) from ${form.partyName}`, deviceIds: lines.map((l) => l.deviceId) },
+    { action: 'create', entity: 'purchase', refId: pRef.id, refNo: purchaseNo, amount: total, note: `${billCountText({ items: lines, accessories: acc })} from ${form.partyName}`, deviceIds: lines.map((l) => l.deviceId) },
     batch,
   );
   await batch.commit();
-  return { id: pRef.id, purchaseNo, devices: saved };
+  return { id: pRef.id, purchaseNo, devices: saved, accessories: acc };
 }
 
-export async function deletePurchase(purchase, { devices, repairs, payments }) {
+export async function deletePurchase(purchase, { devices, repairs, payments, returns = [], accStock = new Map() }) {
+  const notes = returns.filter((x) => x.kind === 'purchase' && x.billId === purchase.id);
+  if (notes.length) throw new Error(`This purchase has returns (${notes.map((x) => x.returnNo).join(', ')}). Delete those first.`);
+  for (const l of accLines(purchase)) {
+    const st = accStock.get(l.accessoryId);
+    const left = (st?.qty || 0) - lineQty(l);
+    if (left < 0) throw new Error(`Cannot delete: ${pieces(-left)} of ${l.name} from this purchase ${-left === 1 ? 'is' : 'are'} already sold. Delete those bills first, or edit the purchase instead.`);
+    for (const s of l.serials || []) if (!(st?.serials.get(cleanSerial(s))?.count > 0)) throw new Error(`Cannot delete: ${l.name} serial ${s} is already sold.`);
+  }
   const ids = new Set(purchase.items.map((i) => i.deviceId));
   const sold = devices.filter((d) => ids.has(d.id) && d.status === 'sold');
   if (sold.length) {
@@ -313,7 +508,7 @@ export async function deletePurchase(purchase, { devices, repairs, payments }) {
     .forEach((p) => batch.delete(doc(db, 'payments', p.id)));
   batch.delete(doc(db, 'purchases', purchase.id));
   logActivity(
-    { action: 'delete', entity: 'purchase', refId: purchase.id, refNo: purchase.purchaseNo, amount: purchase.total, note: purchase.partyName, deviceIds: [...ids] },
+    { action: 'delete', entity: 'purchase', refId: purchase.id, refNo: purchase.purchaseNo, amount: purchase.total, note: `${purchase.partyName} · ${billCountText(purchase)}`, deviceIds: [...ids] },
     batch,
   );
   await batch.commit();
@@ -354,7 +549,10 @@ const deviceFields = (it, form) => ({
  * Edits a purchase: header, every device's details, add new phones, remove phones still in stock.
  * Privately sold phones (hidden while locked) are never shown in the form - they are kept untouched.
  */
-export async function updatePurchase(purchase, form, { settings, devices, sales, repairs, payments }) {
+export async function updatePurchase(purchase, form, { settings, devices, sales, repairs, payments, returns = [], accessories = [], accStock = new Map(), shownAccessories = null }) {
+  const accById = new Map(accessories.map((a) => [a.id, a]));
+  const acc = mergeHiddenAcc(purchaseAccLines(form.accessories, accById), accLines(purchase), shownAccessories);
+  checkPurchaseAccEdit(purchase, acc, { accStock, accById, returns });
   const devMap = new Map(devices.map((d) => [d.id, d]));
   const inForm = new Set(form.items.filter((i) => i.deviceId).map((i) => i.deviceId));
   const kept = [];
@@ -370,7 +568,7 @@ export async function updatePurchase(purchase, form, { settings, devices, sales,
       throw new Error(`${line.brand} ${line.model} (${line.imei}) is ${{ sold: 'already sold', returned: 'returned to the supplier' }[d.status] || 'at repair'} - it can't be removed from this purchase.`);
     }
   }
-  if (!form.items.length && !kept.length) throw new Error('A purchase needs at least one device. Delete the purchase instead.');
+  if (!form.items.length && !kept.length && !acc.length) throw new Error('A purchase needs at least one phone or accessory. Delete the purchase instead.');
 
   const added = form.items.filter((i) => !i.deviceId);
   const sns = await allocateSerials(added.length, settings, devices);
@@ -437,7 +635,7 @@ export async function updatePurchase(purchase, form, { settings, devices, sales,
   }
 
   const all = [...lines, ...kept];
-  const subtotal = round2(all.reduce((s, l) => s + num(l.price), 0));
+  const subtotal = round2(all.reduce((s, l) => s + num(l.price), 0) + acc.reduce((s, l) => s + l.amount, 0));
   const total = round2(subtotal + num(form.otherCharges) - num(form.discount));
   batch.update(doc(db, 'purchases', purchase.id), {
     supplierBillNo: (form.billNo || '').trim(),
@@ -445,6 +643,7 @@ export async function updatePurchase(purchase, form, { settings, devices, sales,
     partyId: form.partyId,
     partyName: form.partyName,
     items: all,
+    accessories: acc,
     subtotal,
     otherCharges: round2(form.otherCharges),
     discount: round2(form.discount),
@@ -466,7 +665,7 @@ export async function updatePurchase(purchase, form, { settings, devices, sales,
       refId: purchase.id,
       refNo: purchase.purchaseNo,
       amount: total,
-      note: [`${lines.length} device(s)`, added.length && `${added.length} added`, removed.length && `${removed.length} removed`].filter(Boolean).join(' · '),
+      note: [billCountText({ items: all, accessories: acc }), added.length && `${added.length} phone(s) added`, removed.length && `${removed.length} removed`].filter(Boolean).join(' · '),
       deviceIds: lines.map((l) => l.deviceId),
     },
     batch,
@@ -474,10 +673,60 @@ export async function updatePurchase(purchase, form, { settings, devices, sales,
   await batch.commit();
 }
 
+/**
+ * While locked, the edit form only shows the part of each accessory line that was not sold on a
+ * private bill. Put that hidden part back so saving never loses it.
+ */
+function mergeHiddenAcc(formLines, savedLines, shownLines) {
+  if (!shownLines) return formLines;
+  const shown = new Map(shownLines.map((l) => [l.accessoryId, l]));
+  const out = formLines.map((l) => ({ ...l, serials: [...l.serials] }));
+  for (const saved of savedLines) {
+    const vis = shown.get(saved.accessoryId);
+    const hiddenQty = lineQty(saved) - (vis ? lineQty(vis) : 0);
+    if (hiddenQty <= 0) continue;
+    const visSerials = new Set((vis?.serials || []).map(cleanSerial));
+    const hiddenSerials = (saved.serials || []).map(cleanSerial).filter((s) => !visSerials.has(s));
+    let line = out.find((l) => l.accessoryId === saved.accessoryId);
+    if (!line) {
+      line = { ...saved, qty: 0, amount: 0, serials: [] };
+      out.push(line);
+    }
+    line.qty += hiddenQty;
+    line.serials = [...new Set([...line.serials, ...hiddenSerials])];
+    line.amount = round2(line.qty * num(line.rate));
+  }
+  return out;
+}
+
+/** An edited purchase may not take away accessory pieces that are already sold or returned. */
+function checkPurchaseAccEdit(purchase, acc, { accStock, accById, returns }) {
+  const before = new Map(accLines(purchase).map((l) => [l.accessoryId, l]));
+  const after = new Map(acc.map((l) => [l.accessoryId, l]));
+  const own = new Set(accLines(purchase).flatMap((l) => (l.serials || []).map(cleanSerial)));
+  checkNewSerials(acc, accStock, accById, own);
+  for (const id of new Set([...before.keys(), ...after.keys()])) {
+    const b = before.get(id);
+    const a = after.get(id);
+    const name = (a || b).name;
+    const st = accStock.get(id);
+    const back = accReturned(returns.filter((x) => x.kind === 'purchase'), purchase.id, id);
+    if (back.qty > lineQty(a)) throw new Error(`${name}: ${pieces(back.qty)} went back to the supplier on a debit note - the quantity can't go below that.`);
+    const keep = new Set((a?.serials || []).map(cleanSerial));
+    for (const s of back.serials) if (!keep.has(s)) throw new Error(`${name}: serial ${s} is on a debit note - it can't be removed.`);
+    const delta = lineQty(a) - lineQty(b);
+    if ((st?.qty || 0) + delta < 0) throw new Error(`${name}: ${pieces(-((st?.qty || 0) + delta))} more than what is in stock would be removed - those are already sold.`);
+    for (const s of b?.serials || []) {
+      const k = cleanSerial(s);
+      if (!keep.has(k) && !(st?.serials.get(k)?.count > 0)) throw new Error(`${name}: serial ${k} is already sold - it can't be removed from this purchase.`);
+    }
+  }
+}
+
 /** Removes one phone that is still in stock from its purchase (the purchase total drops by its price). */
 export async function deleteDevice(device, purchase, repairs) {
   if (device.status !== 'in_stock') throw new Error('Only a phone that is in stock can be deleted.');
-  if (!purchase || purchase.items.length <= 1) throw new Error('This is the only phone in its purchase - delete the purchase instead.');
+  if (!purchase || (purchase.items.length <= 1 && !accLines(purchase).length)) throw new Error('This is the only phone in its purchase - delete the purchase instead.');
   const line = purchase.items.find((i) => i.deviceId === device.id);
   const price = num(line?.price);
   const batch = writeBatch(db);
@@ -499,11 +748,54 @@ export async function deleteDevice(device, purchase, repairs) {
 
 /* ------------------------------------------------------------------ sales */
 
-export async function createSale(form, { settings, sales, devices }) {
+/** Clean sale lines (one per accessory), checked against the true stock. */
+function saleAccLines(list, accById, accStock, settings) {
+  const out = [];
+  const seen = new Set();
+  for (const l of list || []) {
+    const a = accById.get(l.accessoryId);
+    if (!a) throw new Error('An accessory on this bill no longer exists.');
+    if (seen.has(a.id)) throw new Error(`${accName(a)} is added twice - use one line with the full quantity.`);
+    seen.add(a.id);
+    const st = accStock.get(a.id);
+    const serial = a.track === 'serial';
+    const serials = serial ? [...new Set((l.serials || []).map(cleanSerial).filter(Boolean))] : [];
+    const qty = serial ? serials.length : Math.round(num(l.qty));
+    if (qty <= 0) throw new Error(`${accName(a)}: ${serial ? 'pick or scan the serial number(s)' : 'enter the quantity'}.`);
+    if (serial) {
+      for (const s of serials) if (!(st?.serials.get(s)?.count > 0)) throw new Error(`${accName(a)}: serial ${s} is not in stock.`);
+    } else if (qty > (st?.qty || 0)) {
+      throw new Error(`${accName(a)}: only ${pieces(Math.max(0, st?.qty || 0))} in stock.`);
+    }
+    const rate = round2(l.rate);
+    if (rate <= 0) throw new Error(`${accName(a)}: enter the selling price.`);
+    const line = {
+      accessoryId: a.id,
+      name: accName(a),
+      brand: a.brand || '',
+      category: a.category || '',
+      code: a.code || '',
+      hsn: a.hsn || categoryHsn(a.category) || settings?.hsnDefault || '8517',
+      track: serial ? 'serial' : 'qty',
+      qty,
+      rate,
+      amount: round2(qty * rate),
+      serials,
+      warranty: (l.warranty || '').trim(),
+    };
+    line.cost = lineCost(line, st);
+    out.push(line);
+  }
+  return out;
+}
+
+export async function createSale(form, { settings, sales, devices, accessories = [], accStock = new Map() }) {
   const hidden = Boolean(form.hidden);
   const prefix = hidden ? settings?.cashInvoicePrefix || 'CS-' : settings?.invoicePrefix || 'INV-';
   const kind = hidden ? 'cashSale' : 'sale';
   const deviceMap = new Map(devices.map((d) => [d.id, d]));
+  const acc = saleAccLines(form.accessories, new Map(accessories.map((a) => [a.id, a])), accStock, settings);
+  if (!form.items.length && !acc.length) throw new Error('Add at least one phone or accessory.');
 
   for (const it of form.items) {
     const d = deviceMap.get(it.deviceId);
@@ -539,18 +831,20 @@ export async function createSale(form, { settings, sales, devices }) {
   }
 
   // GST: the form passes the rate it shows (0 for a cash bill when GST is "bank payments only")
-  const subtotal = round2(items.reduce((s, i) => s + i.price, 0));
+  const subtotal = round2(items.reduce((s, i) => s + i.price, 0) + acc.reduce((s, l) => s + l.amount, 0));
   const rate = num(form.taxPercent);
   const inclusive = rate > 0 && settings?.gstInclusive !== false;
   const { taxable, tax, total } = billTotals({ subtotal, discount: form.discount, rate, inclusive });
   const customerGstin = (form.customerGstin || '').trim().toUpperCase();
   const split = splitGst(tax, settings?.gstin, customerGstin);
-  spreadLines(items.map((i) => i.price), { discount: form.discount, taxable, tax }).forEach((l, n) => {
-    items[n].taxable = l.taxable;
-    items[n].gst = l.tax;
+  // discount and GST spread over every line - phones and accessories alike
+  const allLines = [...items, ...acc];
+  spreadLines(allLines.map((i) => i.price ?? i.amount), { discount: form.discount, taxable, tax }).forEach((l, n) => {
+    allLines[n].taxable = l.taxable;
+    allLines[n].gst = l.tax;
   });
   const received = round2(Math.min(num(form.received), total));
-  const cost = round2(items.reduce((s, i) => s + i.cost, 0));
+  const cost = round2(items.reduce((s, i) => s + i.cost, 0) + acc.reduce((s, l) => s + l.cost, 0));
 
   if (received < total && !form.partyId) {
     throw new Error('Select a party to sell on credit (amount received is less than total).');
@@ -566,6 +860,7 @@ export async function createSale(form, { settings, sales, devices }) {
     customerPhone: (form.customerPhone || '').trim(),
     customerAddress: (form.customerAddress || '').trim(),
     items,
+    accessories: acc,
     subtotal,
     discount: round2(form.discount),
     taxPercent: rate,
@@ -625,7 +920,7 @@ export async function createSale(form, { settings, sales, devices }) {
   }
 
   logActivity(
-    { action: 'create', entity: 'sale', refId: sRef.id, refNo: invoiceNo, amount: total, note: `${items.length} device(s) to ${saleData.customerName}${tax ? ` · GST ${rate}%` : ''}`, hidden, deviceIds: items.map((i) => i.deviceId) },
+    { action: 'create', entity: 'sale', refId: sRef.id, refNo: invoiceNo, amount: total, note: `${billCountText(saleData)} to ${saleData.customerName}${tax ? ` · GST ${rate}%` : ''}`, hidden, deviceIds: items.map((i) => i.deviceId) },
     batch,
   );
   await batch.commit();
@@ -655,7 +950,7 @@ export async function deleteSale(sale, { payments, returns = [] }) {
     .forEach((p) => batch.delete(doc(db, 'payments', p.id)));
   batch.delete(doc(db, 'sales', sale.id));
   logActivity(
-    { action: 'delete', entity: 'sale', refId: sale.id, refNo: sale.invoiceNo, amount: sale.total, note: `${sale.customerName} · devices back in stock`, hidden: sale.hidden, deviceIds: sale.items.map((i) => i.deviceId) },
+    { action: 'delete', entity: 'sale', refId: sale.id, refNo: sale.invoiceNo, amount: sale.total, note: `${sale.customerName} · ${billCountText(sale)} back in stock`, hidden: sale.hidden, deviceIds: sale.items.map((i) => i.deviceId) },
     batch,
   );
   await batch.commit();
@@ -698,20 +993,29 @@ export async function updateSale(sale, form, { settings, payments, devices = nul
       buyerIdProofs,
     });
   }
-  const subtotal = round2(items.reduce((s, i) => s + i.price, 0));
+  // accessories: price and warranty can change; the pieces / serials stay as sold
+  const accForm = new Map((form.accessories || []).map((l) => [l.accessoryId, l]));
+  const acc = accLines(sale).map((l) => {
+    const f = accForm.get(l.accessoryId) || {};
+    const rate = round2(f.rate ?? l.rate);
+    if (rate <= 0) throw new Error(`${l.name}: enter the selling price.`);
+    return { ...l, rate, amount: round2(lineQty(l) * rate), warranty: (f.warranty ?? l.warranty ?? '').trim() };
+  });
+  const subtotal = round2(items.reduce((s, i) => s + i.price, 0) + acc.reduce((s, l) => s + l.amount, 0));
   const rate = num(form.taxPercent);
   const inclusive = rate > 0 && (sale.tax > 0 ? sale.gstInclusive !== false : settings?.gstInclusive !== false);
   const { taxable, tax, total } = billTotals({ subtotal, discount: form.discount, rate, inclusive });
   const customerGstin = (form.customerGstin || '').trim().toUpperCase();
   const split = splitGst(tax, settings?.gstin, customerGstin);
-  spreadLines(items.map((i) => i.price), { taxable, tax }).forEach((l, n) => {
-    items[n].taxable = l.taxable;
-    items[n].gst = l.tax;
+  const allLines = [...items, ...acc];
+  spreadLines(allLines.map((i) => i.price ?? i.amount), { taxable, tax }).forEach((l, n) => {
+    allLines[n].taxable = l.taxable;
+    allLines[n].gst = l.tax;
   });
   const linked = payments.filter((p) => p.refType === 'sale' && p.refId === sale.id);
   const received = round2(linked.reduce((s, p) => s + num(p.amount), 0));
   if (received < total - 0.004 && !form.partyId) throw new Error('Amount received is less than the new total. Select a party so the balance is on their account.');
-  const cost = round2(items.reduce((s, i) => s + num(i.cost), 0));
+  const cost = round2(items.reduce((s, i) => s + num(i.cost), 0) + acc.reduce((s, l) => s + num(l.cost), 0));
   const customerName = (form.customerName || '').trim() || 'Walk-in Customer';
 
   const batch = writeBatch(db);
@@ -723,6 +1027,7 @@ export async function updateSale(sale, form, { settings, payments, devices = nul
     customerAddress: (form.customerAddress || '').trim(),
     customerGstin,
     items,
+    accessories: acc,
     subtotal,
     discount: round2(form.discount),
     taxPercent: rate,
@@ -798,9 +1103,10 @@ function noteLines(kind, bill, values, devMap) {
  * Makes a Credit Note (sales return) or Debit Note (purchase return) for some or all phones of a bill.
  *   form: { date, reason, notes, values: Map(deviceId → amount credited), refund, mode, accountId }
  */
-export async function createReturn(kind, bill, form, { settings, returns, devices }) {
+export async function createReturn(kind, bill, form, { settings, returns, devices, accStock = new Map() }) {
   const devMap = new Map(devices.map((d) => [d.id, d]));
-  if (!form.values.size) throw new Error('Tick at least one phone to return.');
+  const accNote = noteAccLines(kind, bill, form.accValues, { returns, accStock });
+  if (!form.values.size && !accNote.length) throw new Error('Tick at least one phone or accessory to return.');
   for (const id of form.values.keys()) {
     const d = devMap.get(id);
     const ok = kind === 'sale' ? d?.status === 'sold' && d.saleId === bill.id : d?.status === 'in_stock' && d.purchaseId === bill.id;
@@ -810,10 +1116,12 @@ export async function createReturn(kind, bill, form, { settings, returns, device
     }
     if (!(num(form.values.get(id)) > 0)) throw new Error('Every returned phone needs an amount more than 0.');
   }
-  const t = returnTotals(kind, bill, noteLines(kind, bill, form.values, devMap));
+  const t = returnTotals(kind, bill, noteLines(kind, bill, form.values, devMap), accNote);
   if (kind === 'sale') {
     const over = t.items.find((i) => i.value > i.billed + 0.004);
     if (over) throw new Error(`${over.brand} ${over.model}: the return amount can't be more than its bill value (${round2(over.billed)}).`);
+    const overAcc = t.accessories.find((i) => i.value > i.billed + 0.004);
+    if (overAcc) throw new Error(`${overAcc.name}: the return amount can't be more than its bill value (${round2(overAcc.billed)}).`);
   }
   const refund = round2(Math.min(Math.max(num(form.refund), 0), t.total));
   const partyId = bill.partyId || null;
@@ -880,11 +1188,67 @@ export async function createReturn(kind, bill, form, { settings, returns, device
   }
 
   logActivity(
-    { action: 'create', entity: 'return', refId: ref.id, refNo: returnNo, amount: t.total, note: `${t.items.length} device(s) · against ${kind === 'sale' ? bill.invoiceNo : bill.purchaseNo}`, hidden, deviceIds: t.items.map((i) => i.deviceId) },
+    { action: 'create', entity: 'return', refId: ref.id, refNo: returnNo, amount: t.total, note: `${billCountText(t)} · against ${kind === 'sale' ? bill.invoiceNo : bill.purchaseNo}`, hidden, deviceIds: t.items.map((i) => i.deviceId) },
     batch,
   );
   await batch.commit();
   return { id: ref.id, returnNo };
+}
+
+/**
+ * Accessory lines of a new note from the form: accValues = Map(accessoryId → { qty, serials, value }).
+ * Sales returns: only pieces still on the bill (not already returned).
+ * Purchase returns: only pieces of this purchase that are in stock now.
+ */
+function noteAccLines(kind, bill, accValues, { returns, accStock }) {
+  const out = [];
+  for (const [accId, v] of accValues || []) {
+    const l = accLines(bill).find((x) => x.accessoryId === accId);
+    if (!l) throw new Error('An accessory is not on this bill.');
+    const back = accReturned(returns.filter((x) => x.kind === kind), bill.id, accId);
+    const left = lineQty(l) - back.qty;
+    const serial = l.track === 'serial' || (l.serials || []).length > 0;
+    const serials = serial ? [...new Set((v.serials || []).map(cleanSerial).filter(Boolean))] : [];
+    const qty = serial ? serials.length : Math.round(num(v.qty));
+    if (qty <= 0) throw new Error(`${l.name}: ${serial ? 'tick the serial number(s) coming back' : 'enter how many come back'}.`);
+    if (qty > left) throw new Error(`${l.name}: only ${pieces(Math.max(0, left))} left on this bill to return.`);
+    const onBill = new Set((l.serials || []).map(cleanSerial));
+    for (const s of serials) {
+      if (!onBill.has(s)) throw new Error(`${l.name}: serial ${s} is not on this bill.`);
+      if (back.serials.has(s)) throw new Error(`${l.name}: serial ${s} is already returned.`);
+    }
+    const st = accStock.get(accId);
+    if (kind === 'purchase') {
+      if (serial) {
+        for (const s of serials) if (!(st?.serials.get(s)?.count > 0)) throw new Error(`${l.name}: serial ${s} is not in stock - only stock can go back to the supplier.`);
+      } else if (qty > (st?.qty || 0)) {
+        throw new Error(`${l.name}: only ${pieces(Math.max(0, st?.qty || 0))} in stock to send back.`);
+      }
+    } else if (serial) {
+      for (const s of serials) if (st?.serials.get(s)?.count > 0) throw new Error(`${l.name}: serial ${s} is already in stock.`);
+    }
+    if (!(num(v.value) > 0)) throw new Error(`${l.name}: enter its return value (more than ₹0).`);
+    out.push({
+      accessoryId: accId,
+      name: l.name,
+      brand: l.brand || '',
+      category: l.category || '',
+      code: l.code || '',
+      hsn: l.hsn || '',
+      track: serial ? 'serial' : 'qty',
+      qty,
+      serials,
+      rate: num(l.rate),
+      warranty: l.warranty || '',
+      taxable: l.taxable ?? null,
+      gst: l.gst ?? null,
+      billQty: lineQty(l),
+      // sales: the share of the line's cost goes back into stock · purchases: what these pieces cost us
+      cost: kind === 'sale' ? round2((num(l.cost) * qty) / Math.max(1, lineQty(l))) : round2(num(l.rate) * qty),
+      value: round2(v.value),
+    });
+  }
+  return out;
 }
 
 /**
@@ -900,10 +1264,18 @@ export async function updateReturn(note, form, { bill, payments }) {
     return { ...base, value: num(form.values.get(i.deviceId) ?? i.value) };
   });
   if (lines.some((l) => !(l.value > 0))) throw new Error('Every returned phone needs an amount more than 0.');
-  const t = returnTotals(note.kind, bill || note, lines);
+  // accessory lines: only the value changes (the pieces / serials stay - delete the note to change them)
+  const accNote = accLines(note).map((i) => {
+    const b = note.kind === 'sale' ? accLines(bill).find((x) => x.accessoryId === i.accessoryId) : null;
+    const base = b ? { ...i, taxable: b.taxable ?? null, gst: b.gst ?? null, amount: num(b.amount), billQty: lineQty(b) } : { ...i, billQty: lineQty(i) };
+    return { ...base, value: num(form.accValues?.get(i.accessoryId) ?? i.value) };
+  });
+  if (accNote.some((l) => !(l.value > 0))) throw new Error('Every returned accessory needs an amount more than 0.');
+  const t = returnTotals(note.kind, bill || note, lines, accNote);
+  t.accessories = t.accessories.map(({ amount, ...l }) => l); // the bill line's amount is not part of the note
   if (note.kind === 'sale') {
-    const over = t.items.find((i) => i.billed != null && i.value > i.billed + 0.004);
-    if (over) throw new Error(`${over.brand} ${over.model}: the return amount can't be more than its bill value (${round2(over.billed)}).`);
+    const over = [...t.items, ...t.accessories].find((i) => i.billed != null && i.value > i.billed + 0.004);
+    if (over) throw new Error(`${over.name || `${over.brand} ${over.model}`}: the return amount can't be more than its bill value (${round2(over.billed)}).`);
   }
   const refunds = payments.filter((p) => p.refType === RETURN_REF[note.kind] && p.refId === note.id);
   const batch = writeBatch(db);
@@ -924,8 +1296,18 @@ export async function updateReturn(note, form, { bill, payments }) {
 }
 
 /** Cancels a note: the phones go back to how they were (sold on the bill / in stock) and its refunds are removed. */
-export async function deleteReturn(note, { devices, sales, payments }) {
+export async function deleteReturn(note, { devices, sales, payments, accStock = new Map() }) {
   const devMap = new Map(devices.map((d) => [d.id, d]));
+  for (const l of accLines(note)) {
+    const st = accStock.get(l.accessoryId);
+    if (note.kind === 'sale') {
+      // the pieces that came back must still be here to go back on the bill
+      if ((st?.qty || 0) < lineQty(l)) throw new Error(`${l.name}: the returned pieces are already sold again - this return can't be cancelled.`);
+      for (const s of l.serials || []) if (!(st?.serials.get(cleanSerial(s))?.count > 0)) throw new Error(`${l.name}: serial ${s} is sold again - this return can't be cancelled.`);
+    } else {
+      for (const s of l.serials || []) if (st?.serials.get(cleanSerial(s))?.count > 0) throw new Error(`${l.name}: serial ${s} is in stock again - this note can't be cancelled.`);
+    }
+  }
   const batch = writeBatch(db);
   if (note.kind === 'sale') {
     const sale = sales.find((s) => s.id === note.billId);

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Plus, Trash2, Copy, Wrench, Save } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Plus, Trash2, Copy, Wrench, Save, Headphones } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
@@ -8,8 +8,11 @@ import { Field, Segmented, Empty, SkeletonPage } from '../components/ui';
 import PartySelect from '../components/PartySelect';
 import PaymentFields from '../components/PaymentFields';
 import { IdProofEditor } from '../components/IdProof';
+import AccessoryPicker from '../components/AccessoryPicker';
+import AccessoryForm, { splitSerials } from '../components/AccessoryForm';
+import { accLines, billCountText } from '../lib/accessories';
 import { createPurchase, updatePurchase, CASH_ACCOUNT } from '../lib/db';
-import { money, num, round2, today, cleanImei } from '../lib/format';
+import { money, num, round2, today, cleanImei, amountText } from '../lib/format';
 
 export const BRANDS = ['Apple', 'Samsung', 'OnePlus', 'Xiaomi', 'Redmi', 'Realme', 'Vivo', 'Oppo', 'iQOO', 'Motorola', 'Nothing', 'Google', 'Poco', 'Nokia', 'Infinix', 'Tecno', 'Lava'];
 
@@ -33,6 +36,9 @@ const blankItem = () => ({
   repair: { send: false, partyId: null, partyName: '', repairer: '', issue: '' },
 });
 
+/** One accessory line on the form (serials typed / scanned one per line). */
+const accLine = (a, serial = '') => ({ key: (seq += 1), accessoryId: a.id, qty: a.track === 'serial' ? '' : '1', rate: a.purchasePrice ? String(a.purchasePrice) : '', serialsText: serial });
+
 /** One form for new and edit; a key per purchase so moving between them starts fresh. */
 export default function PurchaseNew() {
   const { id } = useParams();
@@ -44,6 +50,8 @@ export default function PurchaseNew() {
 function PurchaseForm({ editId }) {
   const data = useData();
   const { devices, settings, purchases } = data;
+  const [params] = useSearchParams();
+  const accessoryMode = params.get('accessories') === '1'; // "Buy stock" from the Accessories page
   const toast = useToast();
   const navigate = useNavigate();
   const editing = Boolean(editId);
@@ -80,6 +88,7 @@ function PurchaseForm({ editId }) {
         idFiles: d.sellerIdProofs || line.idProofs || [],
       };
     }),
+    accessories: accLines(p).map((l) => ({ key: (seq += 1), accessoryId: l.accessoryId, qty: String(l.qty), rate: String(l.rate ?? ''), serialsText: (l.serials || []).join('\n') })),
     otherCharges: p.otherCharges ? String(p.otherCharges) : '',
     discount: p.discount ? String(p.discount) : '',
     paid: '',
@@ -96,7 +105,8 @@ function PurchaseForm({ editId }) {
           partyName: '',
           date: today(),
           billNo: '',
-          items: [blankItem()],
+          items: accessoryMode ? [] : [blankItem()],
+          accessories: [],
           otherCharges: '',
           discount: '',
           paid: '',
@@ -112,9 +122,27 @@ function PurchaseForm({ editId }) {
   const models = useMemo(() => [...new Set(devices.map((d) => d.model).filter(Boolean))].sort(), [devices]);
 
   const setItem = (i, patch) => setF((p) => ({ ...p, items: p.items.map((it, j) => (j === i ? { ...it, ...patch } : it)) }));
+  const setAcc = (i, patch) => setF((p) => ({ ...p, accessories: p.accessories.map((l, j) => (j === i ? { ...l, ...patch } : l)) }));
+  const accById = useMemo(() => new Map(data.accessories.map((a) => [a.id, a])), [data.accessories]);
+  const [newAcc, setNewAcc] = useState(null); // name typed in the picker → New accessory form
+  const accSerials = (l) => splitSerials(l.serialsText);
+  const accQty = (l) => (accById.get(l.accessoryId)?.track === 'serial' ? accSerials(l).length : Math.max(0, Math.round(num(l.qty))));
+  const addAcc = (a, serial = '') =>
+    setF((p) => {
+      const at = p.accessories.findIndex((l) => l.accessoryId === a.id);
+      if (at < 0) return { ...p, accessories: [...p.accessories, accLine(a, serial)] };
+      // already on the bill: one more piece / serial on the same line
+      return {
+        ...p,
+        accessories: p.accessories.map((l, j) =>
+          j !== at ? l : a.track === 'serial' ? { ...l, serialsText: serial ? [...splitSerials(l.serialsText), serial].join('\n') : l.serialsText } : { ...l, qty: String(Math.round(num(l.qty)) + 1) },
+        ),
+      };
+    });
   const setPay = useCallback((v) => setF((p) => ({ ...p, ...v })), []);
 
-  const subtotal = round2(f.items.reduce((s, it) => s + num(it.price), 0));
+  const accTotal = round2(f.accessories.reduce((s, l) => s + accQty(l) * num(l.rate), 0));
+  const subtotal = round2(f.items.reduce((s, it) => s + num(it.price), 0) + accTotal);
   const total = round2(subtotal + num(f.otherCharges) - num(f.discount));
   // advance already paid to this supplier (on account) is adjusted against the new purchase
   const advance = editing || !f.partyId ? 0 : round2(Math.min(data.advances?.get(f.partyId)?.out || 0, Math.max(0, total - num(f.paid))));
@@ -123,7 +151,19 @@ function PurchaseForm({ editId }) {
   const validate = () => {
     const errs = [];
     if (!f.partyId) errs.push('Select the party you are buying from.');
-    if (!f.items.length) errs.push('Add at least one device.');
+    if (!f.items.length && !f.accessories.length) errs.push('Add at least one phone or accessory.');
+    const serialSeen = new Set();
+    f.accessories.forEach((l) => {
+      const a = accById.get(l.accessoryId);
+      const n = a?.name || 'Accessory';
+      if (!a) return errs.push('An accessory on this purchase no longer exists - remove that line.');
+      if (accQty(l) <= 0) errs.push(`${n}: ${a.track === 'serial' ? 'scan or type the serial numbers' : 'enter the quantity'}.`);
+      if (num(l.rate) <= 0) errs.push(`${n}: enter the purchase rate per piece.`);
+      for (const sr of a.track === 'serial' ? accSerials(l) : []) {
+        if (serialSeen.has(sr)) errs.push(`Serial ${sr} is entered twice.`);
+        serialSeen.add(sr);
+      }
+    });
     const own = new Set(f.items.map((it) => it.deviceId).filter(Boolean));
     const live = new Set(devices.filter((d) => d.status !== 'sold' && d.status !== 'returned' && !own.has(d.id)).map((d) => d.imei));
     const seen = new Set();
@@ -141,6 +181,9 @@ function PurchaseForm({ editId }) {
     return errs;
   };
 
+  // the form keeps serials as text - the save functions take a list
+  const accForm = (x) => ({ ...x, accessories: x.accessories.map((l) => ({ accessoryId: l.accessoryId, qty: accQty(l), rate: l.rate, serials: accSerials(l) })) });
+
   const save = async (e) => {
     e.preventDefault();
     const errs = validate();
@@ -149,12 +192,17 @@ function PurchaseForm({ editId }) {
     setBusy(true);
     if (editing) {
       try {
-        await updatePurchase(original, f, {
+        await updatePurchase(original, accForm(f), {
           settings,
           devices: data.raw.devices,
           sales: data.raw.sales,
           repairs: data.raw.repairs,
           payments: data.raw.payments,
+          returns: data.raw.returns,
+          accessories: data.raw.accessories,
+          accStock: data.rawAccStock,
+          // locked: the form shows only what is not on a private bill - the rest is kept as it is
+          shownAccessories: data.privacy.unlocked ? null : accLines(shown),
         });
         toast(`${shown.purchaseNo} updated`);
         navigate(`/purchases/${editId}`);
@@ -165,9 +213,15 @@ function PurchaseForm({ editId }) {
       return;
     }
     try {
-      const { id, purchaseNo, devices: saved } = await createPurchase(f, { settings, purchases: data.raw.purchases, devices: data.raw.devices });
+      const { id, purchaseNo, devices: saved } = await createPurchase(accForm(f), {
+        settings,
+        purchases: data.raw.purchases,
+        devices: data.raw.devices,
+        accessories: data.raw.accessories,
+        accStock: data.rawAccStock,
+      });
       toast(`Purchase ${purchaseNo} saved`);
-      if (settings.autoPrintLabels) {
+      if (settings.autoPrintLabels && saved.length) {
         const { printLabels } = await import('../lib/labels');
         printLabels(saved, settings).catch((err) => toast(err.message, 'error'));
       }
@@ -269,7 +323,7 @@ function PurchaseForm({ editId }) {
                     >
                       <Copy size={15} /> Copy
                     </button>
-                    {f.items.length > 1 && (!it.deviceId || (it.status === 'in_stock' && canDelete)) && (
+                    {(f.items.length > 1 || f.accessories.length > 0) && (!it.deviceId || (it.status === 'in_stock' && canDelete)) && (
                       <button
                         type="button"
                         className="btn btn-ghost btn-icon btn-sm btn-danger"
@@ -375,6 +429,63 @@ function PurchaseForm({ editId }) {
         </section>
 
         <section className="card card-lg">
+          <div className="card-head">
+            <h2>Accessories ({f.accessories.length})</h2>
+            {accTotal > 0 && <span className="muted small num">{money(accTotal)}</span>}
+          </div>
+          <div style={{ marginBottom: f.accessories.length ? 16 : 0 }}>
+            <AccessoryPicker onPick={(a, serial) => addAcc(a, serial)} onCreate={(name) => setNewAcc({ name })} placeholder="Scan box barcode, or search / add accessory…" />
+          </div>
+          <div className="stack">
+            {f.accessories.map((l, i) => {
+              const a = accById.get(l.accessoryId);
+              const st = data.accStock.get(l.accessoryId);
+              const serial = a?.track === 'serial';
+              const list = accSerials(l);
+              return (
+                <div className="line" key={l.key}>
+                  <div className="line-head">
+                    <div className="row" style={{ gap: 10, minWidth: 0 }}>
+                      <span className="line-index"><Headphones size={14} /></span>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="cell-main">{a?.name || 'Accessory'}</div>
+                        <div className="cell-sub">{[a?.brand, a?.code, serial ? 'Serial no.' : 'Counted', `${st?.qty ?? 0} in stock now`].filter(Boolean).join(' · ')}</div>
+                      </div>
+                    </div>
+                    <div className="row" style={{ gap: 6 }}>
+                      <span className="num cell-main">{money(accQty(l) * num(l.rate))}</span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-icon btn-sm btn-danger"
+                        aria-label={`Remove ${a?.name || 'accessory'}`}
+                        onClick={() => setF((p) => ({ ...p, accessories: p.accessories.filter((_, j) => j !== i) }))}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="form-grid">
+                    {serial ? (
+                      <Field label={`Serial numbers (${list.length})`} className="span-2" hint="Scan each piece - one per line">
+                        <textarea className="textarea mono" rows={Math.min(6, Math.max(2, list.length + 1))} value={l.serialsText} onChange={(e) => setAcc(i, { serialsText: e.target.value })} aria-label={`${a?.name} serial numbers`} />
+                      </Field>
+                    ) : (
+                      <Field label="Quantity" required>
+                        <input className="input num" inputMode="numeric" value={l.qty} onChange={(e) => setAcc(i, { qty: e.target.value.replace(/\D/g, '') })} aria-label={`${a?.name} quantity`} />
+                      </Field>
+                    )}
+                    <Field label="Rate per piece (₹)" required>
+                      <input className="input num" inputMode="decimal" value={l.rate} onChange={(e) => setAcc(i, { rate: amountText(e.target.value) })} aria-label={`${a?.name} rate`} />
+                    </Field>
+                  </div>
+                </div>
+              );
+            })}
+            {!f.accessories.length && <p className="muted small" style={{ margin: 0 }}>Chargers, cables, covers… scan the barcode or search above. Items not in the list can be added on the spot.</p>}
+          </div>
+        </section>
+
+        <section className="card card-lg">
           <div className="grid grid-2" style={{ alignItems: 'start' }}>
             <div className="stack">
               {editing ? (
@@ -404,7 +515,7 @@ function PurchaseForm({ editId }) {
             </div>
             <div className="totals">
               <div>
-                <span className="muted">Subtotal ({f.items.length} devices)</span>
+                <span className="muted">Subtotal ({billCountText({ items: f.items, accessories: f.accessories.map((l) => ({ qty: accQty(l) })) })})</span>
                 <b className="num">{money(subtotal)}</b>
               </div>
               <div>
@@ -451,6 +562,16 @@ function PurchaseForm({ editId }) {
           </div>
         </section>
       </div>
+      <AccessoryForm
+        open={Boolean(newAcc)}
+        accessory={null}
+        initialName={newAcc?.name || ''}
+        onClose={(saved) => {
+          setNewAcc(null);
+          // the new item arrives from Firestore a moment later; the line shows its name as soon as it does
+          if (saved) addAcc({ id: saved.id, track: saved.track, purchasePrice: saved.purchasePrice });
+        }}
+      />
     </form>
   );
 }

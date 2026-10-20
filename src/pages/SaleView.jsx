@@ -14,6 +14,8 @@ import PaymentForm from '../components/PaymentForm';
 import { deleteSale, setSaleHidden } from '../lib/db';
 import { accountName } from '../lib/ledger';
 import { returnableSaleLines, returnOf, settledByReturn } from '../lib/returns';
+import AccessoryLines from '../components/AccessoryLines';
+import { accLines, accReturned, billItemsText, billUnits, lineQty } from '../lib/accessories';
 import { money, num, round2, fmtDate, amountInWords } from '../lib/format';
 
 export default function SaleView() {
@@ -45,6 +47,7 @@ export default function SaleView() {
   const notes = returns.filter((x) => x.kind === 'sale' && x.billId === id).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const refunds = payments.filter((x) => x.refType === 'saleReturn' && x.billId === id);
   const canReturn = new Set(returnableSaleLines(s, devices).map((l) => l.deviceId));
+  const accBack = accLines(s).some((l) => lineQty(l) - accReturned(notes, s.id, l.accessoryId).qty > 0);
   const due = round2(num(s.due));
 
   const pdf = async (action) => {
@@ -62,14 +65,14 @@ export default function SaleView() {
   const remove = async () => {
     const ok = await confirm({
       title: `Delete ${s.invoiceNo}?`,
-      message: 'The devices go back to stock and the payments for this bill are removed. This cannot be undone.',
+      message: 'The phones and accessories go back to stock and the payments for this bill are removed. This cannot be undone.',
       confirmText: 'Delete bill',
       danger: true,
     });
     if (!ok) return;
     try {
       await deleteSale(s, data.raw);
-      toast('Bill deleted, devices back in stock');
+      toast('Bill deleted, items back in stock');
       navigate('/sales');
     } catch (e) {
       toast(e.message, 'error');
@@ -107,7 +110,7 @@ export default function SaleView() {
             <MoreMenu
               items={[
                 { label: 'Download PDF', icon: Download, onClick: () => pdf('download') },
-                { label: 'Return phones', icon: Undo2, to: `/returns/new?kind=sale&bill=${s.id}`, hidden: !canReturn.size },
+                { label: 'Sales return', icon: Undo2, to: `/returns/new?kind=sale&bill=${s.id}`, hidden: !canReturn.size && !accBack },
                 { label: s.hidden ? 'Make visible' : 'Make private', icon: s.hidden ? Eye : EyeOff, onClick: togglePrivate, hidden: !privacy.unlocked },
                 { label: 'Delete bill', icon: Trash2, onClick: remove, danger: true, hidden: !canDelete },
               ]}
@@ -150,7 +153,7 @@ export default function SaleView() {
             <div style={{ textAlign: 'right' }}>
               <div className="row" style={{ justifyContent: 'flex-end', gap: 6 }}>
                 {s.hidden && <span className="chip solid">Private</span>}
-                {notes.length > 0 && <span className="chip plain">{s.returnedCount >= s.items.length ? 'Returned' : `${s.returnedCount} returned`}</span>}
+                {notes.length > 0 && <span className="chip plain">{s.returnedCount >= billUnits(s) ? 'Returned' : `${s.returnedCount} returned`}</span>}
                 {due > 0 ? <span className="chip caution">Due {money(due)}</span> : due < -0.004 ? <span className="chip caution">Refund owed {money(-due)}</span> : <span className="chip success">{settledByReturn(s) ? 'Settled' : 'Paid'}</span>}
               </div>
               <div className="muted small" style={{ marginTop: 6 }}>{s.mode} · {accountName(accounts, s.accountId)}</div>
@@ -195,6 +198,16 @@ export default function SaleView() {
               );
             })}
           </div>
+
+          {accLines(s).length > 0 && (
+            <div style={{ marginTop: s.items.length ? 20 : 0 }}>
+              <div className="row-between" style={{ marginBottom: 8 }}>
+                <h2 style={{ fontSize: 16 }}>Accessories</h2>
+                {accBack && <Link className="btn btn-sm" to={`/returns/new?kind=sale&bill=${s.id}`}><Undo2 size={15} /> Return accessories</Link>}
+              </div>
+              <AccessoryLines doc={s} kind="sale" returns={notes} showCost={canProfit} />
+            </div>
+          )}
 
           <div className="grid grid-2" style={{ marginTop: 24, alignItems: 'start' }}>
             <div className="stack-sm small">
@@ -250,7 +263,7 @@ export default function SaleView() {
                   <tr key={x.id} className="clickable" onClick={() => navigate(`/returns/${x.id}`)}>
                     <td className="tnum">{fmtDate(x.date)}</td>
                     <td className="cell-main">{x.returnNo}</td>
-                    <td className="small">{x.items.map((i) => `${i.brand} ${i.model}`).join(', ')}{x.reason && <div className="cell-sub">{x.reason}</div>}</td>
+                    <td className="small">{billItemsText(x)}{x.reason && <div className="cell-sub">{x.reason}</div>}</td>
                     <td className="num cell-main">{money(x.total)}</td>
                   </tr>
                 ))}

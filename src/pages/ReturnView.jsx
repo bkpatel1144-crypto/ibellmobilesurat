@@ -13,6 +13,8 @@ import { deleteReturn } from '../lib/db';
 import { NOTE_TITLE, KIND_LABEL } from '../lib/returns';
 import { accountName } from '../lib/ledger';
 import { money, num, round2, fmtDate } from '../lib/format';
+import AccessoryLines from '../components/AccessoryLines';
+import { accLines, billCountText } from '../lib/accessories';
 
 const REFUND_REF = { sale: 'saleReturn', purchase: 'purchaseReturn' };
 
@@ -51,14 +53,14 @@ export default function ReturnView() {
     const ok = await confirm({
       title: `Delete ${n.returnNo}?`,
       message: sale
-        ? `The phones go back on ${n.billNo} as sold and the refunds for this return are removed. This cannot be undone.`
-        : `The phones come back into stock and the refunds for this return are removed. This cannot be undone.`,
+        ? `The items go back on ${n.billNo} as sold and the refunds for this return are removed. This cannot be undone.`
+        : `The items come back into stock and the refunds for this return are removed. This cannot be undone.`,
       confirmText: 'Delete',
       danger: true,
     });
     if (!ok) return;
     try {
-      await deleteReturn(data.raw.returns.find((x) => x.id === n.id) || n, data.raw);
+      await deleteReturn(data.raw.returns.find((x) => x.id === n.id) || n, { ...data.raw, accStock: data.rawAccStock });
       toast(`${n.returnNo} deleted`);
       navigate('/returns');
     } catch (e) {
@@ -143,7 +145,7 @@ export default function ReturnView() {
             <div className="kpi-value" style={{ fontSize: 20 }}>{n.partyId ? <Link to={`/parties/${n.partyId}`}>{n.partyName}</Link> : n.partyName}</div>
             <div className="kpi-sub">{n.reason || '—'}</div>
           </div>
-          <div className="kpi"><div className="kpi-label">{sale ? 'Total credit' : 'Total debit'}</div><div className="kpi-value">{money(n.total)}</div><div className="kpi-sub">{n.items.length} phone(s)</div></div>
+          <div className="kpi"><div className="kpi-label">{sale ? 'Total credit' : 'Total debit'}</div><div className="kpi-value">{money(n.total)}</div><div className="kpi-sub">{billCountText(n)}</div></div>
           <div className="kpi">
             <div className="kpi-label">{sale ? 'Cash refunded' : 'Cash back received'}</div>
             <div className="kpi-value">{money(refunded)}</div>
@@ -151,6 +153,14 @@ export default function ReturnView() {
           </div>
         </div>
 
+        {accLines(n).length > 0 && (
+          <section className="card card-lg">
+            <div className="card-head"><h2>Accessories returned</h2></div>
+            <AccessoryLines doc={n} kind="return" />
+          </section>
+        )}
+
+        {n.items.length > 0 && (
         <section className="card card-lg">
           <div className="card-head"><h2>Phones returned</h2></div>
           <div className="table-wrap">
@@ -193,6 +203,7 @@ export default function ReturnView() {
             </table>
           </div>
         </section>
+        )}
 
         <section className="card card-lg">
           <div className="grid grid-2" style={{ alignItems: 'start' }}>

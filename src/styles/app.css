@@ -3205,3 +3205,42 @@ body::before {
     background: #fff;
   }
 }
+
+/* ============ Accessories ============ */
+.combo-group {
+  padding: 8px 12px 4px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+button.chip {
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+button.chip:focus-visible,
+.chip-x:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.chip-x:hover {
+  background: color-mix(in srgb, currentColor 15%, transparent);
+}

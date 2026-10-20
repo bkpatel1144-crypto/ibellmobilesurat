@@ -13,6 +13,7 @@ import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
 import { money, num, fmtDate, inRange, byDateDesc, round2 } from '../lib/format';
 import { settledByReturn } from '../lib/returns';
+import { accMatches, billItemsText, billItemNames, billUnits, lineQty, accLines } from '../lib/accessories';
 
 export default function Purchases() {
   const data = useData();
@@ -31,7 +32,7 @@ export default function Purchases() {
     });
     if (!ok) return;
     try {
-      await deletePurchase(data.raw.purchases.find((x) => x.id === p.id) || p, data.raw);
+      await deletePurchase(data.raw.purchases.find((x) => x.id === p.id) || p, { ...data.raw, accStock: data.rawAccStock });
       toast(`${p.purchaseNo} deleted`);
     } catch (e) {
       toast(e.message, 'error');
@@ -51,13 +52,14 @@ export default function Purchases() {
           p.purchaseNo.toLowerCase().includes(s) ||
           (p.partyName || '').toLowerCase().includes(s) ||
           (p.supplierBillNo || '').toLowerCase().includes(s) ||
-          p.items.some((i) => i.imei.includes(s) || `${i.brand} ${i.model}`.toLowerCase().includes(s)),
+          p.items.some((i) => i.imei.includes(s) || `${i.brand} ${i.model}`.toLowerCase().includes(s)) ||
+          accMatches(p, s),
       )
       .sort(byDateDesc);
   }, [purchases, range, q]);
 
   const tot = rows.reduce(
-    (a, p) => ({ total: a.total + num(p.total), paid: a.paid + num(p.paid) + num(p.advance) + num(p.credit), due: a.due + num(p.due), devices: a.devices + p.items.length }),
+    (a, p) => ({ total: a.total + num(p.total), paid: a.paid + num(p.paid) + num(p.advance) + num(p.credit), due: a.due + num(p.due), devices: a.devices + billUnits(p) }),
     { total: 0, paid: 0, due: 0, devices: 0 },
   );
 
@@ -79,12 +81,12 @@ export default function Purchases() {
       date: fmtDate(p.date),
       no: p.purchaseNo,
       party: p.partyName,
-      devices: p.items.map((i) => `${i.brand} ${i.model} (${i.imei})`).join(', '),
+      devices: [...p.items.map((i) => `${i.brand} ${i.model} (${i.imei})`), ...accLines(p).map((l) => `${l.name} x${lineQty(l)}`)].join(', '),
       total: p.total,
       paid: num(p.paid) + num(p.advance) + num(p.credit),
       due: round2(num(p.due)),
     })),
-    foot: { date: 'Total', no: '', party: '', devices: `${tot.devices} devices`, total: tot.total, paid: tot.paid, due: tot.due },
+    foot: { date: 'Total', no: '', party: '', devices: `${tot.devices} items`, total: tot.total, paid: tot.paid, due: tot.due },
   });
 
   const pg = usePaged(rows, {
@@ -93,7 +95,7 @@ export default function Purchases() {
       (p) => p.date,
       (p) => p.purchaseNo,
       (p) => p.partyName,
-      (p) => p.items.map((i) => `${i.brand} ${i.model}`).join(', '),
+      (p) => billItemsText(p),
       (p) => num(p.total),
       (p) => num(p.paid) + num(p.advance) + num(p.credit),
       (p) => round2(num(p.due)),
@@ -104,7 +106,7 @@ export default function Purchases() {
     <div className="page">
       <PageHeader
         title="Purchases"
-        subtitle={`${rows.length} purchase(s) · ${tot.devices} device(s) · ${money(tot.total)}`}
+        subtitle={`${rows.length} purchase(s) · ${tot.devices} item(s) · ${money(tot.total)}`}
         actions={
           <Link to="/purchases/new" className="btn btn-primary">
             <Plus size={16} /> New Purchase
@@ -147,14 +149,14 @@ export default function Purchases() {
                       <td className="cell-main">{p.purchaseNo}</td>
                       <td>{p.partyName}</td>
                       <td className="small">
-                        {p.items.slice(0, 2).map((i) => `${i.brand} ${i.model}`).join(', ')}
-                        {p.items.length > 2 && <span className="muted"> +{p.items.length - 2} more</span>}
+                        {billItemNames(p).slice(0, 2).join(', ')}
+                        {billItemNames(p).length > 2 && <span className="muted"> +{billItemNames(p).length - 2} more</span>}
                       </td>
                       <td className="num cell-main">{money(p.total)}</td>
                       <td className="num">{money(num(p.paid) + num(p.advance) + num(p.credit))}{num(p.advance) + num(p.credit) > 0 && <div className="cell-sub">incl. {num(p.advance) > 0 && num(p.credit) > 0 ? 'advance + credit' : num(p.advance) > 0 ? 'advance' : 'return credit'}</div>}</td>
                       <td className="num">
                         <div className="row" style={{ gap: 4, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
-                          {p.returnedCount > 0 && <span className="chip plain" title={`${money(p.returned)} returned`}>{p.returnedCount >= p.items.length ? 'Returned' : `${p.returnedCount} returned`}</span>}
+                          {p.returnedCount > 0 && <span className="chip plain" title={`${money(p.returned)} returned`}>{p.returnedCount >= billUnits(p) ? 'Returned' : `${p.returnedCount} returned`}</span>}
                           {due > 0 ? <span className="chip caution">{money(due)}</span> : due < -0.004 ? <span className="chip caution">Refund due {money(-due)}</span> : <span className="chip success">{settledByReturn(p) ? 'Settled' : 'Paid'}</span>}
                         </div>
                       </td>

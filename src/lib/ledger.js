@@ -1,4 +1,5 @@
 import { num, round2, byDateAsc } from './format';
+import { billCountText, billItemsText } from './accessories';
 import { CASH_ACCOUNT } from './db';
 
 /* Sign convention for parties: balance > 0 → party owes us (receivable),
@@ -15,7 +16,7 @@ export function partyEntries(partyId, { sales, purchases, payments, repairs, ret
       createdAt: x.createdAt,
       type: sale ? 'Sales Return' : 'Purchase Return',
       ref: x.returnNo,
-      particulars: `${x.items.length} device(s) against ${x.billNo}: ${x.items.map((i) => `${i.brand} ${i.model}`).join(', ')}`,
+      particulars: `${billCountText(x)} against ${x.billNo}: ${billItemsText(x)}`,
       debit: sale ? 0 : num(x.total),
       credit: sale ? num(x.total) : 0,
       link: `/returns/${x.id}`,
@@ -28,7 +29,7 @@ export function partyEntries(partyId, { sales, purchases, payments, repairs, ret
       createdAt: s.createdAt,
       type: 'Sale',
       ref: s.invoiceNo,
-      particulars: `${s.items.length} device(s): ${s.items.map((i) => `${i.brand} ${i.model}`).join(', ')}`,
+      particulars: `${billCountText(s)}: ${billItemsText(s)}`,
       debit: num(s.total),
       credit: 0,
       link: `/sales/${s.id}`,
@@ -41,7 +42,7 @@ export function partyEntries(partyId, { sales, purchases, payments, repairs, ret
       createdAt: p.createdAt,
       type: 'Purchase',
       ref: p.purchaseNo,
-      particulars: `${p.items.length} device(s): ${p.items.map((i) => `${i.brand} ${i.model}`).join(', ')}`,
+      particulars: `${billCountText(p)}: ${billItemsText(p)}`,
       debit: 0,
       credit: num(p.total),
       link: `/purchases/${p.id}`,

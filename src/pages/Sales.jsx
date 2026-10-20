@@ -13,6 +13,7 @@ import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
 import { money, num, fmtDate, inRange, byDateDesc, round2 } from '../lib/format';
 import { settledByReturn } from '../lib/returns';
+import { accMatches, billItemsText, billItemNames, billUnits, lineQty, accLines } from '../lib/accessories';
 
 export default function Sales() {
   const data = useData();
@@ -44,7 +45,8 @@ export default function Sales() {
           x.invoiceNo.toLowerCase().includes(s) ||
           (x.customerName || '').toLowerCase().includes(s) ||
           (x.customerPhone || '').includes(s) ||
-          x.items.some((i) => i.imei.includes(s) || `${i.brand} ${i.model}`.toLowerCase().includes(s)),
+          x.items.some((i) => i.imei.includes(s) || `${i.brand} ${i.model}`.toLowerCase().includes(s)) ||
+          accMatches(x, s),
       )
       .sort(byDateDesc);
   }, [sales, range, q, status]);
@@ -56,7 +58,7 @@ export default function Sales() {
       due: a.due + num(x.due),
       returned: a.returned + num(x.returned),
       profit: a.profit + num(x.profit),
-      devices: a.devices + x.items.length,
+      devices: a.devices + billUnits(x),
     }),
     { total: 0, received: 0, profit: 0, devices: 0, due: 0, returned: 0 },
   );
@@ -67,7 +69,7 @@ export default function Sales() {
       (x) => x.date,
       (x) => x.invoiceNo,
       (x) => x.customerName,
-      (x) => x.items.map((i) => `${i.brand} ${i.model}`).join(', '),
+      (x) => billItemsText(x),
       (x) => num(x.total),
       ...(showProfit ? [(x) => num(x.profit)] : []),
       (x) => round2(num(x.due)),
@@ -96,7 +98,7 @@ export default function Sales() {
       date: fmtDate(x.date),
       no: x.invoiceNo,
       cust: [x.customerName, x.customerPhone].filter(Boolean).join(' · '),
-      devices: x.items.map((i) => `${i.brand} ${i.model} (${i.imei})`).join(', '),
+      devices: [...x.items.map((i) => `${i.brand} ${i.model} (${i.imei})`), ...accLines(x).map((l) => `${l.name} x${lineQty(l)}`)].join(', '),
       mode: x.mode,
       total: x.total,
       received: num(x.received) + num(x.advance) + num(x.credit),
@@ -104,7 +106,7 @@ export default function Sales() {
       due: round2(num(x.due)),
       profit: x.profit,
     })),
-    foot: { date: 'Total', devices: `${tot.devices} devices`, total: tot.total, received: tot.received, due: tot.due, returned: tot.returned, profit: tot.profit },
+    foot: { date: 'Total', devices: `${tot.devices} items`, total: tot.total, received: tot.received, due: tot.due, returned: tot.returned, profit: tot.profit },
   });
 
   const remove = async (x) => {
@@ -135,7 +137,7 @@ export default function Sales() {
     <div className="page">
       <PageHeader
         title="Sales"
-        subtitle={`${rows.length} bill(s) · ${tot.devices} device(s) · ${money(tot.total)}`}
+        subtitle={`${rows.length} bill(s) · ${tot.devices} item(s) · ${money(tot.total)}`}
         actions={
           <Link to="/sales/new" className="btn btn-primary">
             <Plus size={16} /> New Sale
@@ -184,14 +186,14 @@ export default function Sales() {
                         <div className="cell-sub">{x.customerPhone}</div>
                       </td>
                       <td className="small">
-                        {x.items.slice(0, 2).map((i) => `${i.brand} ${i.model}`).join(', ')}
-                        {x.items.length > 2 && <span className="muted"> +{x.items.length - 2}</span>}
+                        {billItemNames(x).slice(0, 2).join(', ')}
+                        {billItemNames(x).length > 2 && <span className="muted"> +{billItemNames(x).length - 2}</span>}
                       </td>
                       <td className="num cell-main">{money(x.total)}</td>
                       {showProfit && <td className="num">{money(x.profit)}</td>}
                       <td className="num">
                         <div className="row" style={{ gap: 4, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
-                          {x.returnedCount > 0 && <span className="chip plain" title={`${money(x.returned)} returned`}>{x.returnedCount >= x.items.length ? 'Returned' : `${x.returnedCount} returned`}</span>}
+                          {x.returnedCount > 0 && <span className="chip plain" title={`${money(x.returned)} returned`}>{x.returnedCount >= billUnits(x) ? 'Returned' : `${x.returnedCount} returned`}</span>}
                           {due > 0 ? <span className="chip caution">Due {money(due)}</span> : due < -0.004 ? <span className="chip caution">Refund {money(-due)}</span> : <span className="chip success">{settledByReturn(x) ? 'Settled' : 'Paid'}</span>}
                         </div>
                       </td>

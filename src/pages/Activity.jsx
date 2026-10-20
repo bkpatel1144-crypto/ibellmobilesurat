@@ -11,6 +11,7 @@ import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
 import { ACTIVITY_KEEP_DAYS } from '../lib/db';
 import { money, toISODate, inRange } from '../lib/format';
+import { billCountText } from '../lib/accessories';
 
 const ACTIONS = {
   create: 'Created',
@@ -23,6 +24,8 @@ const ACTIONS = {
   'audit-done': 'Audit completed',
   private: 'Made private',
   public: 'Made visible',
+  'stock-in': 'Stock added',
+  'stock-out': 'Stock removed',
 };
 
 const ENTITIES = {
@@ -35,6 +38,8 @@ const ENTITIES = {
   party: 'Party',
   bank: 'Bank account',
   device: 'Device',
+  accessory: 'Accessory',
+  adjustment: 'Stock adjustment',
   repair: 'Repair',
   audit: 'Stock audit',
   settings: 'Settings',
@@ -42,7 +47,7 @@ const ENTITIES = {
   session: 'Session',
 };
 
-const LINKS = { sale: '/sales/', purchase: '/purchases/', return: '/returns/', party: '/parties/', audit: '/audit/' };
+const LINKS = { sale: '/sales/', purchase: '/purchases/', return: '/returns/', party: '/parties/', audit: '/audit/', accessory: '/accessories/', adjustment: '/accessories/' };
 
 /** Only the newest entries are streamed; older ones are removed automatically after ACTIVITY_KEEP_DAYS. */
 const LIVE_LIMIT = 3000;
@@ -89,7 +94,7 @@ export default function Activity() {
       .map((r) => {
         const p = r.entity === 'purchase' && shown.get(r.refId);
         // device count as the locked view shows it, so the log never reveals a privately sold phone
-        return p && r.action === 'create' ? { ...r, note: `${p.items.length} device(s) from ${p.partyName}`, amount: p.total } : r;
+        return p && r.action === 'create' ? { ...r, note: `${billCountText(p)} from ${p.partyName}`, amount: p.total } : r;
       });
   }, [rows, privacy.unlocked, raw.devices, purchases]);
 

@@ -11,6 +11,7 @@ import {
   Wallet,
   Plus,
   IndianRupee,
+  Headphones,
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { PageHeader } from '../components/Layout';
@@ -18,6 +19,7 @@ import { Kpi, Empty } from '../components/ui';
 import { MoneyBars, BarList } from '../components/Charts';
 import { money, num, today, addDays, startOfMonth, fmtDate, fmtDateShort, byDateDesc } from '../lib/format';
 import { partyBalances, accountBalances } from '../lib/ledger';
+import { accLines, billCountText, billItemsText, lineQty } from '../lib/accessories';
 
 export default function Dashboard() {
   const data = useData();
@@ -74,9 +76,39 @@ export default function Dashboard() {
           b.count -= 1;
         }
       }
+    // accessories sold this month as one row
+    for (const x of monthSales)
+      for (const l of accLines(x)) {
+        const b = brand.get('Accessories') || { value: 0, count: 0 };
+        b.value += num(l.amount);
+        b.count += lineQty(l);
+        brand.set('Accessories', b);
+      }
+    for (const x of monthSR)
+      for (const l of accLines(x)) {
+        const b = brand.get('Accessories');
+        if (b) {
+          b.value -= num(l.value);
+          b.count -= lineQty(l);
+        }
+      }
 
     // sales returns take their profit back; purchase returns add their gain / loss
-    const monthProfit = sum(monthSales, (x) => x.profit) - sum(monthSR, (x) => x.profit) + sum(monthPR, (x) => x.profit);
+    // accessory stock found (+) / damaged or lost (−), at cost, is part of the month's result
+    const monthAdj = sum(data.stockAdjustments.filter((x) => x.date >= m0), (x) => (num(x.qty) < 0 ? -num(x.value) : num(x.value)));
+    const monthProfit = sum(monthSales, (x) => x.profit) - sum(monthSR, (x) => x.profit) + sum(monthPR, (x) => x.profit) + monthAdj;
+
+    // accessories in stock
+    let accPieces = 0;
+    let accValue = 0;
+    let accLow = 0;
+    for (const a of data.accessories) {
+      const st = data.accStock.get(a.id);
+      if (!st) continue;
+      accPieces += Math.max(0, st.qty);
+      accValue += st.value;
+      if (st.low || st.qty <= 0) accLow += 1;
+    }
     const monthExpenses = sum(monthExp, (x) => x.amount);
 
     return {
@@ -87,6 +119,10 @@ export default function Dashboard() {
       monthTotal: sum(monthSales, (x) => x.total) - sum(monthSR, (x) => x.total),
       monthCount: monthSales.length,
       monthProfit,
+      monthAdj,
+      accPieces,
+      accValue,
+      accLow,
       monthExpenses,
       monthNet: monthProfit - monthExpenses,
       monthPurchTotal: sum(monthPurch, (x) => x.total) - sum(monthPR, (x) => x.total),
@@ -135,7 +171,7 @@ export default function Dashboard() {
               icon={TrendingUp}
               label="Month net profit"
               value={money(s.monthNet)}
-              sub={`Gross ${money(s.monthProfit)} − exp. ${money(s.monthExpenses)}`}
+              sub={`Gross ${money(s.monthProfit)} − exp. ${money(s.monthExpenses)}${s.monthAdj ? ` · stock adj. ${money(s.monthAdj)}` : ''}`}
             />
           )}
           <Kpi
@@ -143,6 +179,12 @@ export default function Dashboard() {
             label="Stock"
             value={`${s.stockCount} ${s.stockCount === 1 ? 'device' : 'devices'}`}
             sub={data.can('viewProfit') ? `Value ${money(s.stockValue)} · ${s.newCount} new` : `${s.newCount} new`}
+          />
+          <Kpi
+            icon={Headphones}
+            label="Accessories"
+            value={`${s.accPieces} pieces`}
+            sub={[data.can('viewProfit') && `Value ${money(s.accValue)}`, s.accLow > 0 && `${s.accLow} low / out`].filter(Boolean).join(' · ') || `${data.accessories.length} items`}
           />
           <Kpi icon={Wrench} label="In repair" value={s.repairCount} sub="Devices at repair" />
           <Kpi icon={ArrowDownLeft} label="To receive" value={money(s.receive)} sub="From parties" />
@@ -184,7 +226,7 @@ export default function Dashboard() {
                           <div className="cell-main">{x.customerName}</div>
                           <div className="cell-sub">{x.invoiceNo} · {fmtDate(x.date)}</div>
                         </td>
-                        <td className="small muted">{x.items.map((i) => i.model).join(', ')}</td>
+                        <td className="small muted">{billItemsText(x, 3)}</td>
                         <td className="num cell-main">{money(x.total)}</td>
                       </tr>
                     ))}
@@ -211,7 +253,7 @@ export default function Dashboard() {
                           <div className="cell-main">{x.partyName}</div>
                           <div className="cell-sub">{x.purchaseNo} · {fmtDate(x.date)}</div>
                         </td>
-                        <td className="small muted">{x.items.length} device(s)</td>
+                        <td className="small muted">{billCountText(x)}</td>
                         <td className="num cell-main">{money(x.total)}</td>
                       </tr>
                     ))}

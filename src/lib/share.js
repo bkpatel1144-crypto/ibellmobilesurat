@@ -1,5 +1,6 @@
 import { money, num, fmtDate } from './format';
 import { settledByReturn } from './returns';
+import { billItemsText } from './accessories';
 
 /*
  * WhatsApp sharing without a server.
@@ -29,7 +30,7 @@ export const fillTemplate = (tpl, vars) =>
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
-const items = (list) => list.map((i) => [i.brand, i.model].filter(Boolean).join(' ')).join(', ');
+const items = (doc) => billItemsText(doc);
 const tpl = (settings, key) => settings?.[key] || WA_DEFAULTS[key];
 
 export function saleMessage(s, settings) {
@@ -39,7 +40,7 @@ export function saleMessage(s, settings) {
     shop: settings.shopName,
     no: s.invoiceNo,
     date: fmtDate(s.date),
-    items: items(s.items),
+    items: items(s),
     total: money(s.total),
     balance: due > 0.004 ? `Balance due: ${money(due)}` : due < -0.004 ? `Refund due to you: ${money(-due)}` : settledByReturn(s) ? 'Settled by return.' : 'Paid in full. Thank you!',
   });
@@ -52,7 +53,7 @@ export function purchaseMessage(p, settings) {
     shop: settings.shopName,
     no: p.purchaseNo,
     date: fmtDate(p.date),
-    items: items(p.items),
+    items: items(p),
     total: money(p.total),
     balance: due > 0.004 ? `Paid ${money(p.paid)} · balance ${money(due)}` : due < -0.004 ? `You owe us ${money(-due)} (returns)` : settledByReturn(p) ? 'Settled by return (debit note).' : 'Paid in full.',
   });
@@ -68,7 +69,7 @@ export function returnMessage(n, settings, refunded = 0) {
     no: n.returnNo,
     date: fmtDate(n.date),
     bill: n.billNo,
-    items: items(n.items),
+    items: items(n),
     total: money(n.total),
     balance: `${sale ? 'Refunded' : 'Refund received'}: ${money(refunded)}${rest > 0.004 ? ` · ${money(rest)} adjusted against bill ${n.billNo}` : ''}`,
   });

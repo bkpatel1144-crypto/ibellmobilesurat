@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Search, Trash2, Save, Printer, Paperclip, ScanLine } from 'lucide-react';
+import { Search, Trash2, Save, Printer, Paperclip, ScanLine, Headphones, X } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
@@ -9,14 +9,21 @@ import PartySelect from '../components/PartySelect';
 import PaymentFields from '../components/PaymentFields';
 import { IdProofEditor } from '../components/IdProof';
 import { createSale, CASH_ACCOUNT } from '../lib/db';
-import { money, num, round2, today, cleanImei, deviceName } from '../lib/format';
+import { money, num, round2, today, cleanImei, deviceName, amountText } from '../lib/format';
 import { gstApplies, billTotals, splitGst, validGstin, stateOf, stateName } from '../lib/gst';
+import { cleanSerial, lineCost, billCountText } from '../lib/accessories';
 
 let seq = 0;
 
+/** One accessory line on the bill: counted pieces, or the exact serials sold. */
+const accLineFor = (a, serial) => {
+  seq += 1;
+  return { key: `a${seq}`, accessoryId: a.id, qty: '1', serials: serial ? [serial] : [], rate: a.salePrice ? String(a.salePrice) : '', warranty: a.warranty || '' };
+};
+
 export default function SaleNew() {
   const data = useData();
-  const { devices, settings, privacy, advances } = data;
+  const { devices, settings, privacy, advances, accessories, accStock } = data;
   const canProfit = data.can('viewProfit');
   const toast = useToast();
   const navigate = useNavigate();
@@ -25,6 +32,8 @@ export default function SaleNew() {
   const initial = () => {
     const pre = params.get('device');
     const d = pre && devices.find((x) => x.id === pre && x.status === 'in_stock');
+    const preAcc = params.get('accessory');
+    const a = preAcc && accessories.find((x) => x.id === preAcc && accStock.get(x.id)?.qty > 0);
     return {
       partyId: null,
       customerName: '',
@@ -32,6 +41,7 @@ export default function SaleNew() {
       customerAddress: '',
       date: today(),
       items: d ? [lineFor(d, settings)] : [],
+      accessories: a ? [accLineFor(a)] : [],
       discount: '',
       taxPercent: null, // null = automatic from the GST settings and payment mode
       customerGstin: '',
@@ -69,50 +79,101 @@ export default function SaleNew() {
   }, [stock, q, f.items]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const devMap = useMemo(() => new Map(devices.map((d) => [d.id, d])), [devices]);
+  const accById = useMemo(() => new Map(accessories.map((a) => [a.id, a])), [accessories]);
+
+  // accessories with stock, for the same search box
+  const accMatches = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return accessories.filter((a) => accStock.get(a.id)?.qty > 0).slice(0, 8);
+    return accessories
+      .filter((a) => accStock.get(a.id)?.qty > 0)
+      .filter((a) => a.name.toLowerCase().includes(s) || (a.brand || '').toLowerCase().includes(s) || (a.code || '').toLowerCase().includes(s))
+      .slice(0, 15);
+  }, [accessories, accStock, q]);
 
   const addDevice = (d) => {
     setF((p) => ({ ...p, items: [...p.items, lineFor(d, settings)] }));
     setQ('');
+    setPickOpen(false); // never leave the list over the line just added; typing opens it again
+  };
+  const takenSerials = (p) => new Set(p.accessories.flatMap((l) => l.serials));
+  /** Adds one piece: a new line, or one more on the item's line (a scanned serial joins its line). */
+  const addAccessory = (a, serial) => {
+    setF((p) => {
+      if (serial && takenSerials(p).has(serial)) return p;
+      const at = p.accessories.findIndex((l) => l.accessoryId === a.id);
+      if (at < 0) return { ...p, accessories: [...p.accessories, accLineFor(a, a.track === 'serial' ? serial : '')] };
+      return {
+        ...p,
+        accessories: p.accessories.map((l, j) => {
+          if (j !== at) return l;
+          if (a.track === 'serial') return serial ? { ...l, serials: [...l.serials, serial] } : l;
+          return { ...l, qty: String(Math.round(num(l.qty)) + 1) };
+        }),
+      };
+    });
+    setQ('');
+    setPickOpen(false);
   };
   const setItem = (i, patch) => setF((p) => ({ ...p, items: p.items.map((it, j) => (j === i ? { ...it, ...patch } : it)) }));
+  const setAcc = (i, patch) => setF((p) => ({ ...p, accessories: p.accessories.map((l, j) => (j === i ? { ...l, ...patch } : l)) }));
   const setPay = useCallback((v) => setF((p) => ({ ...p, ...v })), []);
 
-  // exact IMEI typed or scanned + Enter → add straight away
+  // exact IMEI / SN, accessory barcode or accessory serial typed or scanned + Enter → add straight away
   const onSearchKey = (e) => {
     if (e.key !== 'Enter') return;
     e.preventDefault();
     const imei = cleanImei(q);
+    if (!imei) return;
     const exact = stock.find(
       (d) => !chosen.has(d.id) && (d.imei === imei || d.imei2 === imei || (d.sn && d.sn.toLowerCase() === imei.toLowerCase())),
     );
-    if (exact) addDevice(exact);
-    else if (matches.length === 1) addDevice(matches[0]);
+    if (exact) return addDevice(exact);
+    const code = imei.toUpperCase();
+    const byCode = accessories.find((a) => (a.code || '').toUpperCase() === code && accStock.get(a.id)?.qty > 0);
+    if (byCode) return addAccessory(byCode);
+    const serial = cleanSerial(imei);
+    const bySerial = accessories.find((a) => accStock.get(a.id)?.serials.get(serial)?.count > 0);
+    if (bySerial) return addAccessory(bySerial, serial);
+    if (matches.length === 1 && !accMatches.length) addDevice(matches[0]);
+    else if (!matches.length && accMatches.length === 1) addAccessory(accMatches[0]);
   };
 
   // GST: automatic from Settings → Billing (e.g. only on bank payments), can be changed per bill
   const autoRate = gstApplies(settings, f.mode) ? num(settings.gstRate) : 0;
   const rate = f.taxPercent === null ? autoRate : num(f.taxPercent);
   const inclusive = settings.gstInclusive !== false;
-  const subtotal = round2(f.items.reduce((s, it) => s + num(it.price), 0));
+  const accQty = (l) => (accById.get(l.accessoryId)?.track === 'serial' ? l.serials.length : Math.max(0, Math.round(num(l.qty))));
+  const accAmount = (l) => round2(accQty(l) * num(l.rate));
+  const subtotal = round2(f.items.reduce((s, it) => s + num(it.price), 0) + f.accessories.reduce((s, l) => s + accAmount(l), 0));
   const { taxable, tax, total } = billTotals({ subtotal, discount: f.discount, rate, inclusive });
   const split = splitGst(tax, settings.gstin, f.customerGstin);
   // advance (booking amount) this customer paid earlier on account is adjusted against the bill
   const advanceFree = f.partyId ? advances?.get(f.partyId)?.in || 0 : 0;
   const advance = round2(Math.min(advanceFree, Math.max(0, total - num(f.received))));
   const balance = round2(total - num(f.received) - advance);
-  const cost = f.items.reduce((s, it) => {
-    const d = devMap.get(it.deviceId);
-    return s + num(d?.purchasePrice) + num(d?.repairCost);
-  }, 0);
+  const cost =
+    f.items.reduce((s, it) => {
+      const d = devMap.get(it.deviceId);
+      return s + num(d?.purchasePrice) + num(d?.repairCost);
+    }, 0) + f.accessories.reduce((s, l) => s + lineCost({ qty: accQty(l), serials: l.serials }, accStock.get(l.accessoryId)), 0);
 
   // Cash sales are private by default; the owner (unlocked) can override per sale
   const hidden = privacy.unlocked && f.hidden !== null ? f.hidden : f.mode === 'Cash';
 
   const validate = () => {
     const errs = [];
-    if (!f.items.length) errs.push('Add at least one device.');
+    if (!f.items.length && !f.accessories.length) errs.push('Add at least one phone or accessory.');
     f.items.forEach((it, i) => {
       if (num(it.price) <= 0) errs.push(`Device ${i + 1}: enter the selling price.`);
+    });
+    f.accessories.forEach((l) => {
+      const a = accById.get(l.accessoryId);
+      const st = accStock.get(l.accessoryId);
+      if (!a) return errs.push('An accessory on this bill no longer exists - remove that line.');
+      if (accQty(l) <= 0) errs.push(`${a.name}: ${a.track === 'serial' ? 'pick or scan the serial number' : 'enter the quantity'}.`);
+      else if (a.track !== 'serial' && accQty(l) > (st?.qty || 0)) errs.push(`${a.name}: only ${Math.max(0, st?.qty || 0)} in stock.`);
+      if (num(l.rate) <= 0) errs.push(`${a.name}: enter the selling price.`);
     });
     if (balance > 0.004 && !f.partyId) errs.push('Amount received is less than total. Select a party to sell on credit.');
     if (num(f.received) > total + 0.004) errs.push('Amount received is more than the bill total.');
@@ -125,7 +186,10 @@ export default function SaleNew() {
     if (errs.length) return;
     setBusy(print ? 'print' : 'save');
     try {
-      const { id, invoiceNo, sale } = await createSale({ ...f, taxPercent: rate, hidden }, { settings, sales: data.raw.sales, devices: data.raw.devices });
+      const { id, invoiceNo, sale } = await createSale(
+        { ...f, taxPercent: rate, hidden, accessories: f.accessories.map((l) => ({ ...l, qty: accQty(l) })) },
+        { settings, sales: data.raw.sales, devices: data.raw.devices, accessories: data.raw.accessories, accStock: data.rawAccStock },
+      );
       toast(`Bill ${invoiceNo} saved`);
       if (print) {
         const { invoicePdf } = await import('../lib/export');
@@ -222,8 +286,8 @@ export default function SaleNew() {
 
         <section className="card card-lg">
           <div className="card-head">
-            <h2>Devices ({f.items.length})</h2>
-            <span className="muted small">{stock.length} in stock</span>
+            <h2>Items ({f.items.length + f.accessories.length})</h2>
+            <span className="muted small">{stock.length} phones in stock</span>
           </div>
 
           <div className="combo" style={{ marginBottom: 16 }}>
@@ -231,9 +295,12 @@ export default function SaleNew() {
               {q ? <Search size={16} /> : <ScanLine size={16} />}
               <input
                 className="input"
-                placeholder="Scan barcode / type IMEI or SN, or search model…"
+                placeholder="Scan barcode / IMEI / serial, or search phone or accessory…"
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  setPickOpen(true);
+                }}
                 onFocus={() => setPickOpen(true)}
                 onBlur={() => (blurTimer.current = setTimeout(() => setPickOpen(false), 150))}
                 onKeyDown={onSearchKey}
@@ -242,6 +309,7 @@ export default function SaleNew() {
             </div>
             {pickOpen && (
               <div className="combo-list glass--large" onMouseDown={() => clearTimeout(blurTimer.current)}>
+                {matches.length > 0 && accMatches.length > 0 && <div className="combo-group xs muted">Phones</div>}
                 {matches.map((d) => (
                   <button type="button" key={d.id} className="combo-item" onMouseDown={(e) => e.preventDefault()} onClick={() => addDevice(d)}>
                     <span>
@@ -252,12 +320,28 @@ export default function SaleNew() {
                     <span className="chip plain">{d.condition}</span>
                   </button>
                 ))}
-                {!matches.length && <div className="muted small" style={{ padding: 12 }}>No matching device in stock.</div>}
+                {accMatches.length > 0 && <div className="combo-group xs muted">Accessories</div>}
+                {accMatches.map((a) => {
+                  const st = accStock.get(a.id);
+                  return (
+                    <button type="button" key={a.id} className="combo-item" onMouseDown={(e) => e.preventDefault()} onClick={() => addAccessory(a)}>
+                      <span>
+                        <span className="cell-main">{a.name}</span>
+                        <div className="cell-sub">{[a.brand, a.code, a.track === 'serial' && 'Serial no.'].filter(Boolean).join(' · ')}</div>
+                      </span>
+                      <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
+                        <span className="chip plain">{st?.qty} in stock</span>
+                        {a.salePrice > 0 && <span className="muted small num">{money(a.salePrice)}</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+                {!matches.length && !accMatches.length && <div className="muted small" style={{ padding: 12 }}>No matching phone or accessory in stock.</div>}
               </div>
             )}
           </div>
 
-          {f.items.length ? (
+          {f.items.length || f.accessories.length ? (
             <div className="stack">
               {f.items.map((it, i) => {
                 const d = devMap.get(it.deviceId);
@@ -304,9 +388,70 @@ export default function SaleNew() {
                   </div>
                 );
               })}
+              {f.accessories.map((l, i) => {
+                const a = accById.get(l.accessoryId);
+                const st = accStock.get(l.accessoryId);
+                const serial = a?.track === 'serial';
+                const free = serial ? (st?.inStock || []).filter((s) => !f.accessories.some((x) => x.serials.includes(s))) : [];
+                const c = lineCost({ qty: accQty(l), serials: l.serials }, st);
+                return (
+                  <div className="line" key={l.key}>
+                    <div className="line-head">
+                      <div className="row" style={{ gap: 10, minWidth: 0 }}>
+                        <span className="line-index"><Headphones size={14} /></span>
+                        <div style={{ minWidth: 0 }}>
+                          <div className="cell-main">{a?.name || 'Accessory'}</div>
+                          <div className="cell-sub">{[a?.brand, a?.code, `${st?.qty ?? 0} in stock`].filter(Boolean).join(' · ')}</div>
+                        </div>
+                      </div>
+                      <div className="row" style={{ gap: 6 }}>
+                        <span className="num cell-main">{money(accAmount(l))}</span>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-icon btn-sm btn-danger"
+                          aria-label={`Remove ${a?.name || 'accessory'}`}
+                          onClick={() => setF((p) => ({ ...p, accessories: p.accessories.filter((_, j) => j !== i) }))}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="form-grid">
+                      {serial ? (
+                        <Field label={`Serial numbers (${l.serials.length})`} className="span-2" hint="Scan the serial in the box above, or pick one">
+                          <div className="row" style={{ gap: 6 }}>
+                            {l.serials.map((s) => (
+                              <span key={s} className="chip plain mono">
+                                {s}
+                                <button type="button" className="chip-x" aria-label={`Remove serial ${s}`} onClick={() => setAcc(i, { serials: l.serials.filter((x) => x !== s) })}><X size={12} /></button>
+                              </span>
+                            ))}
+                            {free.length > 0 && (
+                              <select className="select" style={{ width: 200 }} value="" onChange={(e) => e.target.value && setAcc(i, { serials: [...l.serials, e.target.value] })} aria-label={`Add ${a?.name} serial`}>
+                                <option value="">+ Add serial…</option>
+                                {free.map((s) => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                            )}
+                          </div>
+                        </Field>
+                      ) : (
+                        <Field label="Quantity" required hint={`${st?.qty ?? 0} in stock`}>
+                          <input className="input num" inputMode="numeric" value={l.qty} onChange={(e) => setAcc(i, { qty: e.target.value.replace(/\D/g, '') })} aria-label={`${a?.name} quantity`} />
+                        </Field>
+                      )}
+                      <Field label="Price per piece (₹)" required hint={canProfit && accQty(l) ? `Cost ${money(c / accQty(l))}${num(l.rate) ? ` · margin ${money(accAmount(l) - c)}` : ''}` : undefined}>
+                        <input className="input num" inputMode="decimal" value={l.rate} onChange={(e) => setAcc(i, { rate: amountText(e.target.value) })} aria-label={`${a?.name} price`} />
+                      </Field>
+                      <Field label="Warranty">
+                        <input className="input" placeholder="e.g. 1 Year" value={l.warranty} onChange={(e) => setAcc(i, { warranty: e.target.value })} aria-label={`${a?.name} warranty`} />
+                      </Field>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           ) : (
-            <Empty icon={ScanLine} title="No device added">Scan the IMEI or search above to add devices to this bill.</Empty>
+            <Empty icon={ScanLine} title="Nothing added yet">Scan an IMEI, accessory barcode or serial - or search above.</Empty>
           )}
         </section>
 
@@ -376,7 +521,8 @@ export default function SaleNew() {
               <div><span className="muted">Received</span><span className="num">{money(num(f.received))}</span></div>
               {advance > 0 && <div><span className="muted">Advance adjusted</span><span className="num">{money(advance)}</span></div>}
               <div><span className="muted">Balance due</span><b className="num">{money(Math.max(balance, 0))}</b></div>
-              {canProfit && privacy.unlocked && f.items.length > 0 && (
+              {(f.items.length > 0 || f.accessories.length > 0) && <div className="xs muted">{billCountText({ items: f.items, accessories: f.accessories.map((l) => ({ qty: accQty(l) })) })}</div>}
+              {canProfit && privacy.unlocked && (f.items.length > 0 || f.accessories.length > 0) && (
                 <div><span className="muted">Profit</span><span className="num">{money(taxable - cost)}</span></div>
               )}
             </div>

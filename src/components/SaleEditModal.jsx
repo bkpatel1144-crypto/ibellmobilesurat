@@ -7,9 +7,10 @@ import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { updateSale } from '../lib/db';
 import { billTotals, splitGst, validGstin } from '../lib/gst';
-import { money, num } from '../lib/format';
+import { money, num, amountText } from '../lib/format';
+import { accLines, lineQty } from '../lib/accessories';
 
-/** Edit a bill: customer, date, prices, warranty, buyer ID proof, discount, GST. Phones stay the same. */
+/** Edit a bill: customer, date, prices, warranty, buyer ID proof, discount, GST. Phones and accessory pieces stay the same. */
 export default function SaleEditModal({ sale, open, onClose }) {
   const data = useData();
   const { settings, parties } = data;
@@ -44,13 +45,15 @@ export default function SaleEditModal({ sale, open, onClose }) {
         idNumber: it.buyerIdNumber || '',
         idFiles: it.buyerIdProofs || [],
       })),
+      accessories: accLines(sale).map((l) => ({ accessoryId: l.accessoryId, name: l.name, qty: lineQty(l), serials: l.serials || [], rate: String(l.rate), warranty: l.warranty || '' })),
     });
   }, [open, sale]);
 
   if (!open || !f) return null;
 
   const setItem = (i, patch) => setF((p) => ({ ...p, items: p.items.map((it, j) => (j === i ? { ...it, ...patch } : it)) }));
-  const subtotal = f.items.reduce((s, it) => s + num(it.price), 0);
+  const setAcc = (i, patch) => setF((p) => ({ ...p, accessories: p.accessories.map((l, j) => (j === i ? { ...l, ...patch } : l)) }));
+  const subtotal = f.items.reduce((s, it) => s + num(it.price), 0) + f.accessories.reduce((s, l) => s + l.qty * num(l.rate), 0);
   const rate = num(f.taxPercent);
   const inclusive = rate > 0 && (sale.tax > 0 ? sale.gstInclusive !== false : settings.gstInclusive !== false);
   const t = billTotals({ subtotal, discount: f.discount, rate, inclusive });
@@ -59,6 +62,7 @@ export default function SaleEditModal({ sale, open, onClose }) {
   const submit = async (e) => {
     e.preventDefault();
     if (f.items.some((it) => num(it.price) <= 0)) return setError('Every phone needs a selling price.');
+    if (f.accessories.some((l) => num(l.rate) <= 0)) return setError('Every accessory needs a selling price.');
     if (f.customerGstin && !validGstin(f.customerGstin)) return setError('Customer GSTIN looks wrong (15 characters).');
     setBusy(true);
     try {
@@ -74,7 +78,7 @@ export default function SaleEditModal({ sale, open, onClose }) {
   };
 
   return (
-    <Modal open onClose={() => onClose(false)} title={`Edit ${sale.invoiceNo}`} subtitle="To change the phones on a bill, delete it and make a new one." size="wide">
+    <Modal open onClose={() => onClose(false)} title={`Edit ${sale.invoiceNo}`} subtitle="To change the phones or accessory pieces on a bill, delete it and make a new one." size="wide">
       <form onSubmit={submit} className="stack">
         {locked && (
           <div className="sub-box small" role="note">
@@ -136,6 +140,24 @@ export default function SaleEditModal({ sale, open, onClose }) {
                 <Paperclip size={15} /> Add buyer ID proof
               </button>
             )}
+          </div>
+        ))}
+
+        {f.accessories.map((l, i) => (
+          <div className="line" key={l.accessoryId}>
+            <div className="line-head">
+              <div>
+                <div className="cell-main">{l.name} × {l.qty}</div>
+                {l.serials.length > 0 && <div className="cell-sub mono">{l.serials.join(', ')}</div>}
+              </div>
+              <span className="num cell-main">{money(l.qty * num(l.rate))}</span>
+            </div>
+            <div className="form-grid">
+              <Field label="Price per piece (₹)" required>
+                <input className="input num" inputMode="decimal" value={l.rate} onChange={(e) => setAcc(i, { rate: amountText(e.target.value) })} disabled={locked} aria-label={`${l.name} price`} />
+              </Field>
+              <Field label="Warranty"><input className="input" value={l.warranty} onChange={(e) => setAcc(i, { warranty: e.target.value })} aria-label={`${l.name} warranty`} /></Field>
+            </div>
           </div>
         ))}
 

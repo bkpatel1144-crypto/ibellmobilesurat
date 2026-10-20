@@ -19,6 +19,7 @@ import { TYPE_LABEL } from './Parties';
 import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
 import { settledByReturn } from '../lib/returns';
+import { billItemsText, billUnits } from '../lib/accessories';
 
 /** Where one bill stands: still due, owed back, or done (cleared by a return alone = "Settled"). */
 function BillStatus({ bill, sale }) {
@@ -62,9 +63,9 @@ export default function PartyView() {
       purchases: pp,
       salesTotal: sum(ps, (s) => s.total),
       salesProfit: sum(ps, (s) => s.profit),
-      salesCount: ps.reduce((t, s) => t + s.items.length, 0),
+      salesCount: ps.reduce((t, s) => t + billUnits(s), 0),
       purchTotal: sum(pp, (p) => p.total),
-      purchCount: pp.reduce((t, p) => t + p.items.length, 0),
+      purchCount: pp.reduce((t, p) => t + billUnits(p), 0),
       fromThem,
       // profit made on devices bought from this party (wherever they were sold)
       supplyProfit: sum(soldFromThem, (d) => num(d.salePrice) - num(d.purchasePrice) - num(d.repairCost)),
@@ -80,11 +81,11 @@ export default function PartyView() {
   });
   const pgSales = usePaged(a.sales, {
     resetOn: [id],
-    sort: [(s) => s.date, (s) => s.invoiceNo, (s) => s.items.map((i) => `${i.brand} ${i.model}`).join(', '), (s) => num(s.total), ...(showProfit ? [(s) => num(s.profit)] : []), (s) => num(s.due)],
+    sort: [(s) => s.date, (s) => s.invoiceNo, (s) => billItemsText(s), (s) => num(s.total), ...(showProfit ? [(s) => num(s.profit)] : []), (s) => num(s.due)],
   });
   const pgPurch = usePaged(a.purchases, {
     resetOn: [id],
-    sort: [(p) => p.date, (p) => p.purchaseNo, (p) => p.items.map((i) => `${i.brand} ${i.model}`).join(', '), (p) => num(p.total), (p) => num(p.paid), (p) => num(p.due)],
+    sort: [(p) => p.date, (p) => p.purchaseNo, (p) => billItemsText(p), (p) => num(p.total), (p) => num(p.paid), (p) => num(p.due)],
   });
   const devCost = (d) => num(d.purchasePrice) + num(d.repairCost);
   const pgDevices = usePaged(a.fromThem, {
@@ -306,7 +307,7 @@ export default function PartyView() {
                     <tr key={s.id} className="clickable" onClick={() => navigate(`/sales/${s.id}`)}>
                       <td className="tnum">{fmtDate(s.date)}</td>
                       <td className="cell-main">{s.invoiceNo}</td>
-                      <td className="small">{s.items.map((i) => `${i.brand} ${i.model}`).join(', ')}</td>
+                      <td className="small">{billItemsText(s)}</td>
                       <td className="num">{money(s.total)}</td>
                       {showProfit && <td className="num">{money(s.profit)}</td>}
                       <td><BillStatus bill={s} sale /></td>
@@ -330,7 +331,7 @@ export default function PartyView() {
                     <tr key={p.id} className="clickable" onClick={() => navigate(`/purchases/${p.id}`)}>
                       <td className="tnum">{fmtDate(p.date)}</td>
                       <td className="cell-main">{p.purchaseNo}</td>
-                      <td className="small">{p.items.map((i) => `${i.brand} ${i.model}`).join(', ')}</td>
+                      <td className="small">{billItemsText(p)}</td>
                       <td className="num">{money(p.total)}</td>
                       <td className="num">{money(p.paid)}</td>
                       <td><BillStatus bill={p} /></td>

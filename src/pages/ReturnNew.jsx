@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Search, Save, Undo2, ScanBarcode } from 'lucide-react';
+import { Search, Save, Undo2, ScanBarcode, Headphones } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
@@ -9,6 +9,7 @@ import PaymentFields from '../components/PaymentFields';
 import { createReturn, updateReturn, CASH_ACCOUNT } from '../lib/db';
 import { REASONS, KIND_LABEL, NOTE_TITLE, returnTotals, returnableSaleLines, returnablePurchaseLines, returnOf, saleLineValue, suggestedRefund, otherOpenDue } from '../lib/returns';
 import { money, num, round2, today, fmtDate, cleanImei, amountText } from '../lib/format';
+import { accLines, accReturned, billItemsText, cleanSerial, lineQty } from '../lib/accessories';
 
 /** One form for a new return and for editing one; keyed so switching bills starts fresh. */
 export default function ReturnNew() {
@@ -17,10 +18,10 @@ export default function ReturnNew() {
   const { ready } = useData();
   if (!ready) return <SkeletonPage />;
   const kind = params.get('kind') === 'purchase' ? 'purchase' : 'sale';
-  return <ReturnForm key={id || `${kind}-${params.get('bill') || ''}`} noteId={id} startKind={kind} startBill={params.get('bill')} startDevice={params.get('device')} />;
+  return <ReturnForm key={id || `${kind}-${params.get('bill') || ''}`} noteId={id} startKind={kind} startBill={params.get('bill')} startDevice={params.get('device')} startAcc={params.get('accessory')} startSerial={params.get('serial')} />;
 }
 
-function ReturnForm({ noteId, startKind, startBill, startDevice }) {
+function ReturnForm({ noteId, startKind, startBill, startDevice, startAcc, startSerial }) {
   const data = useData();
   const { settings, devices, returns, can } = data;
   const canProfit = can('viewProfit');
@@ -45,6 +46,42 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
   }, [bill, devices, sale, editing, note]);
 
   const devMap = useMemo(() => new Map(data.raw.devices.map((d) => [d.id, d])), [data.raw.devices]);
+
+  /**
+   * Accessory lines of a bill and what can still come back:
+   *   sales: pieces not yet returned (serials: the ones not back in stock)
+   *   purchases: pieces not yet returned that are in stock now
+   */
+  const accOptions = useCallback(
+    (b) => {
+      if (!b) return [];
+      const k = b.invoiceNo ? 'sale' : 'purchase';
+      const notes = returns.filter((x) => x.kind === k && x.id !== noteId);
+      return accLines(b).map((l) => {
+        const back = accReturned(notes, b.id, l.accessoryId);
+        const st = data.accStock.get(l.accessoryId);
+        const serial = l.track === 'serial' || (l.serials || []).length > 0;
+        let serials = (l.serials || []).map(cleanSerial).filter((x) => !back.serials.has(x));
+        let left = lineQty(l) - back.qty;
+        if (serial) {
+          serials = serials.filter((x) => (k === 'purchase' ? st?.serials.get(x)?.count > 0 : !(st?.serials.get(x)?.count > 0)));
+          left = serials.length;
+        } else if (k === 'purchase') left = Math.min(left, Math.max(0, st?.qty || 0));
+        const unit = lineQty(l) ? (k === 'sale' ? saleLineValue(b, l) / lineQty(l) : num(l.rate)) : 0;
+        return { line: l, serial, serials, left: Math.max(0, left), returned: back.qty, unit: round2(unit) };
+      });
+    },
+    [returns, noteId, data.accStock],
+  );
+  const accOpts = useMemo(() => {
+    const all = accOptions(bill);
+    if (!editing) return all;
+    const on = new Set(accLines(note).map((l) => l.accessoryId));
+    return all.filter((o) => on.has(o.line.accessoryId));
+  }, [accOptions, bill, editing, note]);
+  /** Phones + accessory pieces that can come back on a bill (bill picker). */
+  const returnableCount = (b) =>
+    (sale ? returnableSaleLines(b, devices) : returnablePurchaseLines(b, devices)).length + accOptions(b).reduce((t, o) => t + o.left, 0);
   const costOf = useCallback(
     (it) => {
       if (sale) return num(it.cost);
@@ -60,9 +97,60 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
     if (note) return Object.fromEntries(note.items.map((i) => [i.deviceId, String(i.value)]));
     if (!bill) return {};
     const lines = sale ? returnableSaleLines(bill, devices) : returnablePurchaseLines(bill, devices);
-    const only = startDevice ? lines.filter((l) => l.deviceId === startDevice) : lines.length === 1 ? lines : [];
+    const accLeft = accOptions(bill).some((o) => o.left > 0);
+    const only = startDevice ? lines.filter((l) => l.deviceId === startDevice) : lines.length === 1 && !startAcc && !accLeft ? lines : [];
     return Object.fromEntries(only.map((l) => [l.deviceId, String(sale ? saleLineValue(bill, l) : num(l.price))]));
   });
+  // accPick: accessoryId → { qty, serials, value, auto } (auto = the value follows the quantity)
+  const startPick = (b, accId, serial) => {
+    const opts = accOptions(b);
+    const pick = (o, ser) => {
+      const serials = o.serial ? (ser ? [ser] : o.serials) : [];
+      const qty = o.serial ? serials.length : o.left;
+      return { qty: String(qty), serials, value: String(round2(o.unit * qty)), auto: true };
+    };
+    if (accId) {
+      const o = opts.find((x) => x.line.accessoryId === accId && x.left > 0);
+      return o ? { [accId]: pick(o, serial && o.serials.includes(serial) ? serial : '') } : {};
+    }
+    const phones = (b.invoiceNo ? returnableSaleLines(b, devices) : returnablePurchaseLines(b, devices)).length;
+    const live = opts.filter((o) => o.left > 0);
+    return !phones && live.length === 1 ? { [live[0].line.accessoryId]: pick(live[0]) } : {};
+  };
+  const [accPick, setAccPick] = useState(() => {
+    if (note) return Object.fromEntries(accLines(note).map((l) => [l.accessoryId, { qty: String(l.qty), serials: l.serials || [], value: String(l.value), auto: false }]));
+    if (!bill || startDevice) return {};
+    return startPick(bill, startAcc, cleanSerial(startSerial));
+  });
+  const setPick = (id, patch) =>
+    setAccPick((p) => {
+      const o = accOpts.find((x) => x.line.accessoryId === id);
+      const cur = { ...p[id], ...patch };
+      if (o && cur.auto && !('value' in patch)) {
+        const qty = o.serial ? cur.serials.length : num(cur.qty);
+        cur.value = String(round2(o.unit * qty));
+      }
+      return { ...p, [id]: cur };
+    });
+  const accChosen = accOpts
+    .filter((o) => accPick[o.line.accessoryId])
+    .map((o) => {
+      const pk = accPick[o.line.accessoryId];
+      const qty = o.serial ? pk.serials.length : Math.round(num(pk.qty));
+      const l = o.line;
+      return {
+        o,
+        line: {
+          ...l,
+          qty,
+          serials: o.serial ? pk.serials : [],
+          billQty: lineQty(l),
+          cost: sale ? round2((num(l.cost) * qty) / Math.max(1, lineQty(l))) : round2(num(l.rate) * qty),
+          value: num(pk.value),
+        },
+      };
+    });
+
   const [f, setF] = useState(() => ({
     date: note?.date || today(),
     reason: note?.reason || REASONS[note?.kind || startKind][0],
@@ -78,7 +166,7 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
   const lines = returnable
     .filter((it) => picked[it.deviceId] !== undefined)
     .map((it) => ({ ...it, cost: costOf(it), value: num(picked[it.deviceId]) }));
-  const t = bill ? returnTotals(kind, bill, lines) : null;
+  const t = bill ? returnTotals(kind, bill, lines, accChosen.map((c) => c.line)) : null;
   const walkIn = sale && bill && !bill.partyId;
   // where the bill stands before and after this note (due > 0: still owed to / by the shop).
   // Credit left on this bill settles the party's other open bills first (see withSettlement).
@@ -97,7 +185,7 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
   };
   let refundHint = 'No account to keep a balance on';
   if (!walkIn) {
-    if (!t?.total) refundHint = 'Tick a phone and enter its return value first';
+    if (!t?.total) refundHint = 'Tick a phone or accessory and enter its return value first';
     else if (suggest > 0) {
       refundHint = `Suggested ${money(suggest)}: ${sale ? 'they paid' : 'you paid'} more than ${sale ? 'they owe' : 'you owe'} now${others > 0.004 ? ` (after their other open bills of ${money(others)})` : ''}. Less stays as credit with them.`;
     } else {
@@ -109,11 +197,13 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
     }
   }
 
-  const pickBill = (b, deviceId) => {
+  const pickBill = (b, deviceId, accId, serial) => {
     setBillId(b.id);
     const ls = sale ? returnableSaleLines(b, devices) : returnablePurchaseLines(b, devices);
-    const only = deviceId ? ls.filter((l) => l.deviceId === deviceId) : ls.length === 1 ? ls : [];
+    const accLeft = accOptions(b).some((o) => o.left > 0);
+    const only = deviceId ? ls.filter((l) => l.deviceId === deviceId) : ls.length === 1 && !accId && !accLeft ? ls : [];
     setPicked(Object.fromEntries(only.map((l) => [l.deviceId, String(sale ? saleLineValue(b, l) : num(l.price))])));
+    setAccPick(deviceId ? {} : startPick(b, accId, serial));
     setF((x) => ({ ...x, refund: null }));
     setQ('');
   };
@@ -123,17 +213,17 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
     if (bill) return [];
     const s = q.trim().toLowerCase();
     return bills
-      .map((b) => ({ b, n: (sale ? returnableSaleLines(b, devices) : returnablePurchaseLines(b, devices)).length }))
+      .map((b) => ({ b, n: returnableCount(b) }))
       .filter(({ b, n }) => {
         if (!n) return false;
         if (!s) return true;
         const no = (sale ? b.invoiceNo : b.purchaseNo).toLowerCase();
         const who = ((sale ? b.customerName : b.partyName) || '').toLowerCase();
-        return no.includes(s) || who.includes(s) || (b.customerPhone || '').includes(s) || b.items.some((i) => i.imei.includes(s) || (i.imei2 || '').includes(s) || (i.sn || devMap.get(i.deviceId)?.sn || '').toLowerCase() === s);
+        return no.includes(s) || who.includes(s) || (b.customerPhone || '').includes(s) || b.items.some((i) => i.imei.includes(s) || (i.imei2 || '').includes(s) || (i.sn || devMap.get(i.deviceId)?.sn || '').toLowerCase() === s) || accLines(b).some((l) => l.name.toLowerCase().includes(s) || (l.serials || []).some((x) => x.toLowerCase() === s));
       })
       .sort((a, b) => (b.b.date || '').localeCompare(a.b.date || ''))
       .slice(0, 25);
-  }, [bill, bills, q, sale, devices, devMap]);
+  }, [bill, bills, q, sale, devices, devMap, accOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Enter with a scanned IMEI / SN jumps straight to that phone's bill
   const onScan = (e) => {
@@ -145,6 +235,13 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
       const b = sale ? d.status === 'sold' && bills.find((x) => x.id === d.saleId) : d.status === 'in_stock' && bills.find((x) => x.id === d.purchaseId);
       if (b) return pickBill(b, d.id);
       return toast(sale ? `${d.brand} ${d.model} is not sold right now` : `${d.brand} ${d.model} is not in stock`, 'error');
+    }
+    // an accessory serial: the bill it was sold on (sales) / bought on and still in stock (purchases)
+    const serial = cleanSerial(q);
+    const hit = serial && bills.find((b) => accOptions(b).some((o) => o.serials.includes(serial)));
+    if (hit) {
+      const o = accOptions(hit).find((x) => x.serials.includes(serial));
+      return pickBill(hit, null, o.line.accessoryId, serial);
     }
     if (candidates.length === 1) pickBill(candidates[0].b);
   };
@@ -159,7 +256,13 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
 
   const validate = () => {
     const errs = [];
-    if (!lines.length) errs.push('Tick at least one phone to return.');
+    if (!lines.length && !accChosen.length) errs.push('Tick at least one phone or accessory to return.');
+    for (const { o, line: l } of accChosen) {
+      if (l.qty <= 0) errs.push(`${l.name}: ${o.serial ? 'tick the serial number(s) coming back' : 'enter how many come back'}.`);
+      else if (!editing && l.qty > o.left) errs.push(`${l.name}: only ${o.left} can come back.`);
+      if (!(l.value > 0)) errs.push(`${l.name}: enter its return value (more than ₹0).`);
+      else if (sale && l.qty > 0 && l.value > round2(o.unit * l.qty) + 0.004) errs.push(`${l.name}: can not be more than its bill value ${money(o.unit * l.qty)}.`);
+    }
     for (const l of lines) {
       if (!(l.value > 0)) errs.push(`${l.brand} ${l.model}: enter its return value (more than ₹0 - usually ${sale ? 'its bill value' : 'the price you bought it for'}; cash back is separate).`);
       else if (sale && l.value > fullValue(l) + 0.004) errs.push(`${l.brand} ${l.model}: can't be more than its bill value ${money(fullValue(l))}.`);
@@ -175,19 +278,21 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
     if (validate().length) return;
     setBusy(true);
     const values = new Map(lines.map((l) => [l.deviceId, l.value]));
+    const accValues = new Map(accChosen.map(({ line: l }) => [l.accessoryId, { qty: l.qty, serials: l.serials, value: l.value }]));
     try {
       if (editing) {
         const rawBill = sale ? data.raw.sales.find((s) => s.id === billId) : data.raw.purchases.find((p) => p.id === billId);
-        await updateReturn(rawNote, { ...f, values }, { bill: rawBill, payments: data.raw.payments });
+        await updateReturn(rawNote, { ...f, values, accValues: new Map(accChosen.map(({ line: l }) => [l.accessoryId, l.value])) }, { bill: rawBill, payments: data.raw.payments });
         toast(`${note.returnNo} updated`);
         navigate(`/returns/${noteId}`);
       } else {
         // purchases: save the real number, not the one shown while private sales are locked
         const rawNo = !sale && data.raw.purchases.find((p) => p.id === bill.id)?.purchaseNo;
-        const { id, returnNo } = await createReturn(kind, rawNo ? { ...bill, purchaseNo: rawNo } : bill, { ...f, refund, values }, {
+        const { id, returnNo } = await createReturn(kind, rawNo ? { ...bill, purchaseNo: rawNo } : bill, { ...f, refund, values, accValues }, {
           settings,
           returns: data.raw.returns,
           devices: data.raw.devices,
+          accStock: data.rawAccStock,
         });
         toast(`${returnNo} saved`);
         navigate(`/returns/${id}`, { replace: true });
@@ -215,7 +320,7 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
     <form className="page" onSubmit={save}>
       <PageHeader
         title={title}
-        subtitle={sale ? `${NOTE_TITLE.sale} · phones come back to stock, the customer is refunded or credited` : `${NOTE_TITLE.purchase} · phones go back to the supplier, they refund you or owe you less`}
+        subtitle={sale ? `${NOTE_TITLE.sale} · items come back to stock, the customer is refunded or credited` : `${NOTE_TITLE.purchase} · items go back to the supplier, they refund you or owe you less`}
         actions={
           <>
             <button type="button" className="btn" onClick={() => navigate(-1)}>Cancel</button>
@@ -256,13 +361,13 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
               </div>
               {candidates.length ? (
                 <div className="stack-sm">
-                  <span className="xs muted">{sale ? 'Bills with phones that can come back' : 'Purchases with phones still in stock'} - tap one</span>
+                  <span className="xs muted">{sale ? 'Bills with phones or accessories that can come back' : 'Purchases with phones or accessories still in stock'} - tap one</span>
                   {candidates.map(({ b, n }) => (
                     <button type="button" key={b.id} className="combo-item" onClick={() => pickBill(b)}>
                       <span style={{ minWidth: 0 }}>
                         <span className="cell-main">{sale ? b.invoiceNo : b.purchaseNo}</span>
                         <span className="cell-sub" style={{ display: 'block' }}>
-                          {fmtDate(b.date)} · {sale ? b.customerName : b.partyName} · {b.items.map((i) => `${i.brand} ${i.model}`).join(', ')}
+                          {fmtDate(b.date)} · {sale ? b.customerName : b.partyName} · {billItemsText(b)}
                         </span>
                       </span>
                       <span className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
@@ -273,8 +378,8 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
                   ))}
                 </div>
               ) : (
-                <Empty icon={Undo2} title={q ? 'No matching bill' : sale ? 'No sold phones to return' : 'No stock to return'}>
-                  {sale ? 'Only phones that are still sold on a bill can come back.' : 'Only phones still in stock can go back to the supplier.'}
+                <Empty icon={Undo2} title={q ? 'No matching bill' : sale ? 'Nothing sold to return' : 'No stock to return'}>
+                  {sale ? 'Only phones and accessories still sold on a bill can come back.' : 'Only stock bought on a purchase can go back to the supplier.'}
                 </Empty>
               )}
             </div>
@@ -298,7 +403,7 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
                   </div>
                 </div>
                 {!editing && (
-                  <button type="button" className="btn btn-sm" onClick={() => { setBillId(null); setPicked({}); }}>
+                  <button type="button" className="btn btn-sm" onClick={() => { setBillId(null); setPicked({}); setAccPick({}); }}>
                     Change bill
                   </button>
                 )}
@@ -307,8 +412,8 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
 
             <section className="card card-lg">
               <div className="card-head">
-                <h2>Phones {editing ? 'on this return' : 'to return'}</h2>
-                <span className="muted small">{lines.length} of {returnable.length} ticked</span>
+                <h2>{editing ? 'On this return' : 'Items to return'}</h2>
+                <span className="muted small">{lines.length + accChosen.length} of {returnable.length + accOpts.length} ticked</span>
               </div>
               <div className="stack">
                 {returnable.map((it) => {
@@ -381,6 +486,88 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
                     </div>
                   );
                 })}
+                {accOpts.map((o) => {
+                  const l = o.line;
+                  const id = l.accessoryId;
+                  const pk = accPick[id];
+                  const on = Boolean(pk);
+                  const chosen = accChosen.find((c) => c.line.accessoryId === id)?.line;
+                  const full = chosen ? round2(o.unit * chosen.qty) : 0;
+                  const none = !editing && o.left <= 0;
+                  return (
+                    <div className={`line ${on ? '' : 'muted-line'}`} key={id}>
+                      <div className="line-head">
+                        <label className="check" style={{ gap: 10 }}>
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            disabled={editing || none}
+                            aria-label={`Return ${l.name}`}
+                            onChange={() =>
+                              setAccPick((p) => {
+                                const n = { ...p };
+                                if (n[id]) delete n[id];
+                                else {
+                                  const serials = o.serial ? o.serials.slice(0, 1) : [];
+                                  const qty = o.serial ? serials.length : 1;
+                                  n[id] = { qty: String(qty), serials, value: String(round2(o.unit * qty)), auto: true };
+                                }
+                                return n;
+                              })
+                            }
+                          />
+                          <span>
+                            <span className="cell-main"><Headphones size={13} /> {l.name}</span>
+                            <span className="cell-sub" style={{ display: 'block' }}>
+                              {[`${lineQty(l)} on this bill`, o.returned > 0 && `${o.returned} already returned`, !editing && (none ? (sale ? 'nothing left to return' : 'none of these in stock') : `${o.left} can come back`)].filter(Boolean).join(' · ')}
+                            </span>
+                          </span>
+                        </label>
+                        <span className="muted small num">{sale ? `Billed ${money(o.unit)} each` : `Bought ${money(o.unit)} each`}</span>
+                      </div>
+                      {on && (
+                        <div className="form-grid">
+                          {o.serial ? (
+                            <Field label={`Serial numbers (${pk.serials.length})`} className="span-2" hint={editing ? 'Delete the note to change the pieces' : 'Tap the serials coming back'}>
+                              <div className="row" style={{ gap: 6 }}>
+                                {(editing ? pk.serials : o.serials).map((x) => (
+                                  <button
+                                    type="button"
+                                    key={x}
+                                    disabled={editing}
+                                    className={`chip plain mono ${pk.serials.includes(x) ? 'solid' : ''}`}
+                                    aria-pressed={pk.serials.includes(x)}
+                                    onClick={() => setPick(id, { serials: pk.serials.includes(x) ? pk.serials.filter((y) => y !== x) : [...pk.serials, x] })}
+                                  >
+                                    {x}
+                                  </button>
+                                ))}
+                              </div>
+                            </Field>
+                          ) : (
+                            <Field label="Quantity coming back" required hint={editing ? 'Delete the note to change the pieces' : `Up to ${o.left}`}>
+                              <input className="input num" inputMode="numeric" value={pk.qty} disabled={editing} onChange={(e) => setPick(id, { qty: e.target.value.replace(/\D/g, '') })} aria-label={`${l.name} quantity back`} />
+                            </Field>
+                          )}
+                          <Field label="Return value (₹)" required hint={sale ? 'For all pieces coming back · not the cash refund' : 'For all pieces going back · not the cash back'}>
+                            <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
+                              <input
+                                className="input num"
+                                inputMode="decimal"
+                                value={pk.value}
+                                placeholder={String(full)}
+                                onChange={(e) => setPick(id, { value: amountText(e.target.value), auto: false })}
+                                aria-label={`${l.name} return value`}
+                                aria-invalid={tried && !(num(pk.value) > 0)}
+                              />
+                              <button type="button" className="btn btn-sm" onClick={() => setPick(id, { value: String(full), auto: true })}>Full</button>
+                            </div>
+                          </Field>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </section>
 
@@ -429,7 +616,7 @@ function ReturnForm({ noteId, startKind, startBill, startDevice }) {
                 </div>
 
                 <div className="totals">
-                  <div><span className="muted">Phones</span><span className="num">{lines.length}</span></div>
+                  <div><span className="muted">Items</span><span className="num">{lines.length + accChosen.reduce((n, c) => n + c.line.qty, 0)}</span></div>
                   {t.tax > 0 && (
                     <>
                       <div><span className="muted">Taxable value</span><span className="num">{money(t.taxable)}</span></div>

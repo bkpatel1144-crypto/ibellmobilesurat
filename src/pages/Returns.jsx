@@ -12,6 +12,7 @@ import { usePaged } from '../lib/usePaged';
 import { deleteReturn } from '../lib/db';
 import { NOTE_TITLE } from '../lib/returns';
 import { money, num, round2, fmtDate, inRange, byDateDesc } from '../lib/format';
+import { accLines, accMatches, billItemNames, billItemsText, billUnits, lineQty } from '../lib/accessories';
 
 const REFUND_REF = { sale: 'saleReturn', purchase: 'purchaseReturn' };
 
@@ -44,13 +45,14 @@ export default function Returns() {
           x.returnNo.toLowerCase().includes(s) ||
           (x.billNo || '').toLowerCase().includes(s) ||
           (x.partyName || '').toLowerCase().includes(s) ||
-          x.items.some((i) => i.imei.includes(s) || `${i.brand} ${i.model}`.toLowerCase().includes(s)),
+          x.items.some((i) => i.imei.includes(s) || `${i.brand} ${i.model}`.toLowerCase().includes(s)) ||
+          accMatches(x, s),
       )
       .sort(byDateDesc);
   }, [returns, kind, range, q]);
 
   const tot = rows.reduce(
-    (a, x) => ({ total: a.total + num(x.total), tax: a.tax + num(x.tax), refund: a.refund + (refunded.get(x.id) || 0), devices: a.devices + x.items.length }),
+    (a, x) => ({ total: a.total + num(x.total), tax: a.tax + num(x.tax), refund: a.refund + (refunded.get(x.id) || 0), devices: a.devices + billUnits(x) }),
     { total: 0, tax: 0, refund: 0, devices: 0 },
   );
 
@@ -61,7 +63,7 @@ export default function Returns() {
       (x) => x.returnNo,
       (x) => x.billNo,
       (x) => x.partyName,
-      (x) => x.items.map((i) => `${i.brand} ${i.model}`).join(', '),
+      (x) => billItemsText(x),
       (x) => num(x.total),
       (x) => refunded.get(x.id) || 0,
     ],
@@ -78,7 +80,7 @@ export default function Returns() {
     });
     if (!ok) return;
     try {
-      await deleteReturn(data.raw.returns.find((r) => r.id === x.id) || x, data.raw);
+      await deleteReturn(data.raw.returns.find((r) => r.id === x.id) || x, { ...data.raw, accStock: data.rawAccStock });
       toast(`${x.returnNo} deleted`);
     } catch (e) {
       toast(e.message, 'error');
@@ -107,19 +109,19 @@ export default function Returns() {
       no: x.returnNo,
       bill: x.billNo,
       party: x.partyName,
-      devices: x.items.map((i) => `${i.brand} ${i.model} (${i.imei})`).join(', '),
+      devices: [...x.items.map((i) => `${i.brand} ${i.model} (${i.imei})`), ...accLines(x).map((l) => `${l.name} x${lineQty(l)}`)].join(', '),
       reason: x.reason,
       taxable: x.taxable,
       tax: x.tax,
       total: x.total,
       refund: refunded.get(x.id) || 0,
     })),
-    foot: { date: 'Total', devices: `${tot.devices} devices`, tax: tot.tax, total: tot.total, refund: tot.refund },
+    foot: { date: 'Total', devices: `${tot.devices} items`, tax: tot.tax, total: tot.total, refund: tot.refund },
   });
 
   const all = returns.filter((x) => inRange(x.date, range.from, range.to));
   const sum = (k) => round2(all.filter((x) => x.kind === k).reduce((s, x) => s + num(x.total), 0));
-  const count = (k) => all.filter((x) => x.kind === k).reduce((s, x) => s + x.items.length, 0);
+  const count = (k) => all.filter((x) => x.kind === k).reduce((s, x) => s + billUnits(x), 0);
 
   return (
     <div className="page">
@@ -190,8 +192,8 @@ export default function Returns() {
                             {x.reason && <div className="cell-sub">{x.reason}</div>}
                           </td>
                           <td className="small">
-                            {x.items.slice(0, 2).map((i) => `${i.brand} ${i.model}`).join(', ')}
-                            {x.items.length > 2 && <span className="muted"> +{x.items.length - 2}</span>}
+                            {billItemNames(x).slice(0, 2).join(', ')}
+                            {billItemNames(x).length > 2 && <span className="muted"> +{billItemNames(x).length - 2}</span>}
                           </td>
                           <td className="num cell-main">
                             {money(x.total)}
@@ -214,7 +216,7 @@ export default function Returns() {
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td colSpan={5}>Total · {tot.devices} phone(s)</td>
+                      <td colSpan={5}>Total · {tot.devices} item(s)</td>
                       <td className="num">{money(tot.total)}</td>
                       <td className="num">{money(tot.refund)}</td>
                       <td />

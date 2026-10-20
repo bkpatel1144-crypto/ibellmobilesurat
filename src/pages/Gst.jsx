@@ -9,6 +9,7 @@ import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
 import { stateName } from '../lib/gst';
 import { money, num, round2, fmtDate, inRange, monthKey, fmtMonth, byDateDesc } from '../lib/format';
+import { accLines, lineQty } from '../lib/accessories';
 
 /** Normalises old and new bills to the same GST numbers. */
 const gstOf = (s) => {
@@ -74,8 +75,31 @@ export default function Gst() {
         h.igst += g.igst * share;
         hsn.set(code, h);
       });
+      // accessories: one HSN row per code, quantity = pieces
+      for (const l of accLines(s)) {
+        const code = l.hsn || settings.hsnDefault || '8517';
+        const h = hsn.get(code) || { qty: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0 };
+        const share = g.taxable ? num(l.taxable) / g.taxable : 0;
+        h.qty += lineQty(l);
+        h.taxable += num(l.taxable);
+        h.cgst += g.cgst * share;
+        h.sgst += g.sgst * share;
+        h.igst += g.igst * share;
+        hsn.set(code, h);
+      }
     }
     for (const x of notes) {
+      for (const l of accLines(x)) {
+        const code = l.hsn || settings.hsnDefault || '8517';
+        const h = hsn.get(code) || { qty: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0 };
+        const share = num(x.taxable) ? num(l.taxable) / num(x.taxable) : 0;
+        h.qty -= lineQty(l);
+        h.taxable -= num(l.taxable);
+        h.cgst -= num(x.cgst) * share;
+        h.sgst -= num(x.sgst) * share;
+        h.igst -= num(x.igst) * share;
+        hsn.set(code, h);
+      }
       for (const it of x.items) {
         const code = it.hsn || settings.hsnDefault || '8517';
         const h = hsn.get(code) || { qty: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0 };

@@ -15,6 +15,8 @@ import { purchaseMessage } from '../lib/share';
 import { deletePurchase } from '../lib/db';
 import { accountName } from '../lib/ledger';
 import { returnablePurchaseLines } from '../lib/returns';
+import AccessoryLines from '../components/AccessoryLines';
+import { accLines, accReturned, accLabels, billCountText, billItemsText, lineQty } from '../lib/accessories';
 import { money, num, round2, fmtDate, plain } from '../lib/format';
 
 export default function PurchaseView() {
@@ -46,17 +48,19 @@ export default function PurchaseView() {
   const notes = returns.filter((x) => x.kind === 'purchase' && x.billId === p.id).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const refunds = payments.filter((x) => x.refType === 'purchaseReturn' && x.billId === p.id);
   const canReturn = new Set(returnablePurchaseLines(p, devices).map((l) => l.deviceId));
+  // accessory pieces of this purchase that can still go back (not yet returned, and in stock)
+  const accBack = accLines(p).some((l) => lineQty(l) - accReturned(notes, p.id, l.accessoryId).qty > 0 && data.accStock.get(l.accessoryId)?.qty > 0);
 
   const remove = async () => {
     const ok = await confirm({
       title: `Delete ${p.purchaseNo}?`,
-      message: 'This removes the purchase, its devices, their repairs and payments. This cannot be undone.',
+      message: 'This removes the purchase, its phones and accessories, their repairs and payments. This cannot be undone.',
       confirmText: 'Delete',
       danger: true,
     });
     if (!ok) return;
     try {
-      await deletePurchase(data.raw.purchases.find((x) => x.id === p.id) || p, data.raw);
+      await deletePurchase(data.raw.purchases.find((x) => x.id === p.id) || p, { ...data.raw, accStock: data.rawAccStock });
       toast('Purchase deleted');
       navigate('/purchases');
     } catch (e) {
@@ -84,7 +88,7 @@ export default function PurchaseView() {
             <button
               className="btn"
               disabled={labelBusy}
-              onClick={() => printLabelsFor(p.items.map((i) => devMap.get(i.deviceId)).filter(Boolean))}
+              onClick={() => printLabelsFor(p.items.map((i) => devMap.get(i.deviceId)).filter(Boolean), accLabels(p, new Map(data.accessories.map((x) => [x.id, x]))))}
             >
               <Barcode size={16} /> {labelBusy ? '…' : 'Labels'}
             </button>
@@ -93,7 +97,7 @@ export default function PurchaseView() {
             <MoreMenu
               items={[
                 { label: 'Download PDF', icon: FileText, onClick: () => voucher() },
-                { label: 'Return to supplier', icon: Redo2, to: `/returns/new?kind=purchase&bill=${p.id}`, hidden: !canReturn.size },
+                { label: 'Return to supplier', icon: Redo2, to: `/returns/new?kind=purchase&bill=${p.id}`, hidden: !canReturn.size && !accBack },
                 { label: 'Delete purchase', icon: Trash2, onClick: remove, danger: true, hidden: !canDelete },
               ]}
             />
@@ -125,11 +129,22 @@ export default function PurchaseView() {
       <div className="stack">
         <div className="kpis">
           <div className="kpi"><div className="kpi-label">Party</div><div className="kpi-value" style={{ fontSize: 20 }}><Link to={`/parties/${p.partyId}`}>{p.partyName}</Link></div><div className="kpi-sub">{p.supplierBillNo ? `Bill ${p.supplierBillNo}` : 'No supplier bill no.'}</div></div>
-          <div className="kpi"><div className="kpi-label">Total</div><div className="kpi-value">{money(p.total)}</div><div className="kpi-sub">{p.items.length} device(s)</div></div>
+          <div className="kpi"><div className="kpi-label">Total</div><div className="kpi-value">{money(p.total)}</div><div className="kpi-sub">{billCountText(p)}</div></div>
           <div className="kpi"><div className="kpi-label">Paid</div><div className="kpi-value">{money(num(p.paid) + num(p.advance) + num(p.credit))}</div>{num(p.advance) + num(p.credit) > 0 && <div className="kpi-sub">incl. {[num(p.advance) > 0 && `${money(p.advance)} advance`, num(p.credit) > 0 && `${money(p.credit)} return credit`].filter(Boolean).join(' + ')}</div>}</div>
           <div className="kpi"><div className="kpi-label">Balance</div><div className="kpi-value">{money(Math.abs(due))}</div><div className="kpi-sub">{due > 0 ? 'To pay' : due < -0.004 ? 'Supplier owes you' : 'Settled'}</div></div>
         </div>
 
+        {accLines(p).length > 0 && (
+          <section className="card card-lg">
+            <div className="card-head">
+              <h2>Accessories</h2>
+              {accBack && <Link className="btn btn-sm" to={`/returns/new?kind=purchase&bill=${p.id}`}><Redo2 size={15} /> Return to supplier</Link>}
+            </div>
+            <AccessoryLines doc={p} kind="purchase" returns={notes} />
+          </section>
+        )}
+
+        {p.items.length > 0 && (
         <section className="card card-lg">
           <div className="card-head"><h2>Devices</h2></div>
           <div className="stack">
@@ -194,6 +209,7 @@ export default function PurchaseView() {
             })}
           </div>
         </section>
+        )}
 
         {notes.length > 0 && (
           <section className="card card-lg">
@@ -207,7 +223,7 @@ export default function PurchaseView() {
                   <tr key={x.id} className="clickable" onClick={() => navigate(`/returns/${x.id}`)}>
                     <td className="tnum">{fmtDate(x.date)}</td>
                     <td className="cell-main">{x.returnNo}</td>
-                    <td className="small">{x.items.map((i) => `${i.brand} ${i.model}`).join(', ')}{x.reason && <div className="cell-sub">{x.reason}</div>}</td>
+                    <td className="small">{billItemsText(x)}{x.reason && <div className="cell-sub">{x.reason}</div>}</td>
                     <td className="num cell-main">{money(x.total)}</td>
                   </tr>
                 ))}

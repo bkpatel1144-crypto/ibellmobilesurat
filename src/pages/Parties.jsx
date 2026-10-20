@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { billUnits } from '../lib/accessories';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Users, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { useData } from '../context/DataContext';
@@ -44,8 +45,8 @@ export default function Parties() {
   const stats = useMemo(() => {
     const m = new Map();
     for (const p of parties) m.set(p.id, { sold: 0, bought: 0 });
-    data.sales.forEach((s) => m.get(s.partyId) && (m.get(s.partyId).sold += s.items.length));
-    data.purchases.forEach((p) => m.get(p.partyId) && (m.get(p.partyId).bought += p.items.length));
+    data.sales.forEach((s) => m.get(s.partyId) && (m.get(s.partyId).sold += billUnits(s)));
+    data.purchases.forEach((p) => m.get(p.partyId) && (m.get(p.partyId).bought += billUnits(p)));
     return m;
   }, [parties, data.sales, data.purchases]);
 

@@ -22,6 +22,7 @@ import {
   BadgePercent,
   ScrollText,
   Undo2,
+  Headphones,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
@@ -44,6 +45,7 @@ const NAV = [
       { to: '/purchases', label: 'Purchases', icon: ShoppingBag },
       { to: '/returns', label: 'Returns', icon: Undo2 },
       { to: '/stock', label: 'Stock', icon: Boxes },
+      { to: '/accessories', label: 'Accessories', icon: Headphones },
       { to: '/audit', label: 'Stock Audit', icon: ClipboardCheck },
       { to: '/repairs', label: 'Repairs', icon: Wrench },
       { to: '/timeline', label: 'IMEI Timeline', icon: History },

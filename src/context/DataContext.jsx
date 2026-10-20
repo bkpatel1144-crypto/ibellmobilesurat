@@ -9,8 +9,9 @@ import { isExpired } from '../lib/audit';
 import { useAuth } from './AuthContext';
 import { saveMember, emailKey, STAFF_DEFAULTS } from '../lib/team';
 import { WA_DEFAULTS } from '../lib/share';
+import { accessoryStock, accLines, cleanSerial, lineQty } from '../lib/accessories';
 
-const COLLECTIONS = ['parties', 'devices', 'purchases', 'sales', 'returns', 'repairs', 'payments', 'expenses', 'banks', 'audits', 'team'];
+const COLLECTIONS = ['parties', 'devices', 'purchases', 'sales', 'returns', 'repairs', 'payments', 'expenses', 'banks', 'audits', 'team', 'accessories', 'stockAdjustments'];
 
 export const DEFAULT_SETTINGS = {
   shopName: 'IBELL MOBILE',
@@ -106,10 +107,12 @@ export function DataProvider({ children }) {
 
   const data = useMemo(() => {
     const d = withSettlement(unlocked ? raw : applyPrivacy(raw));
-    return { ...d, audits: raw.audits.filter((a) => !isExpired(a, clock)) };
+    return { ...d, accStock: accessoryStock(d), audits: raw.audits.filter((a) => !isExpired(a, clock)) };
   }, [raw, unlocked, clock]);
 
   const accounts = useMemo(() => accountList(data.banks, settings), [data.banks, settings]);
+  // true accessory stock (private sales included) - every save checks against this
+  const rawAccStock = useMemo(() => (unlocked ? data.accStock : accessoryStock(raw)), [unlocked, data.accStock, raw]);
 
   const hasPasskey = Boolean(secure?.passkeyHash);
 
@@ -163,6 +166,7 @@ export function DataProvider({ children }) {
   const value = {
     ...data,
     raw,
+    rawAccStock,
     settings,
     accounts,
     me: { email: myEmail, name: meDoc?.name || user?.displayName || myEmail.split('@')[0], role, isOwner: role === 'owner' },
@@ -200,7 +204,7 @@ function withSettlement(d) {
   const returnCount = new Map();
   for (const x of d.returns) {
     add(returned, x.billId, x.total);
-    add(returnCount, x.billId, x.items?.length || 0);
+    add(returnCount, x.billId, (x.items?.length || 0) + accLines(x).reduce((s, l) => s + lineQty(l), 0)); // phones + accessory pieces
   }
   const extra = (id) => ({ returned: round2(returned.get(id) || 0), refunded: round2(refunded.get(id) || 0), returnedCount: returnCount.get(id) || 0 });
 
@@ -290,22 +294,27 @@ const tsOf = (x) => (x.createdAt?.toMillis ? x.createdAt.toMillis() : 0);
 function applyPrivacy(raw) {
   const hiddenDevices = new Set(raw.devices.filter((d) => d.hidden).map((d) => d.id));
   const hiddenPurchases = new Set();
-  const hiddenShare = new Map(); // purchaseId → amount of hidden device lines
+  const hiddenShare = new Map(); // purchaseId → amount of hidden device / accessory lines
   const purchases = [];
+  const { accCut, accessories } = hideAccessories(raw);
 
   for (const p of raw.purchases) {
     const items = p.items || [];
     const visible = items.filter((i) => !hiddenDevices.has(i.deviceId));
-    if (visible.length === items.length) {
+    const cut = accCut.get(p.id); // accessory pieces that were sold privately come off this purchase
+    if (visible.length === items.length && !cut) {
       purchases.push(p);
-    } else if (visible.length === 0) {
-      hiddenPurchases.add(p.id);
-    } else {
-      const hiddenAmt = items.filter((i) => hiddenDevices.has(i.deviceId)).reduce((s, i) => s + num(i.price), 0);
-      const total = round2(num(p.total) - hiddenAmt);
-      hiddenShare.set(p.id, hiddenAmt);
-      purchases.push({ ...p, items: visible, subtotal: round2(num(p.subtotal) - hiddenAmt), total, paid: Math.min(num(p.paid), total) });
+      continue;
     }
+    const acc = cut ? cut.lines : accLines(p);
+    if (visible.length === 0 && acc.length === 0) {
+      hiddenPurchases.add(p.id);
+      continue;
+    }
+    const hiddenAmt = round2(items.filter((i) => hiddenDevices.has(i.deviceId)).reduce((s, i) => s + num(i.price), 0) + (cut?.amount || 0));
+    const total = round2(num(p.total) - hiddenAmt);
+    hiddenShare.set(p.id, hiddenAmt);
+    purchases.push({ ...p, items: visible, accessories: acc, subtotal: round2(num(p.subtotal) - hiddenAmt), total, paid: Math.min(num(p.paid), total) });
   }
 
   const hiddenRepairs = new Set(raw.repairs.filter((r) => hiddenDevices.has(r.deviceId) || r.hidden).map((r) => r.id));
@@ -335,6 +344,7 @@ function applyPrivacy(raw) {
 
   return {
     ...raw,
+    accessories,
     devices: raw.devices
       .filter((d) => !d.hidden)
       .map((d) => (purchaseNo.has(d.purchaseId) ? { ...d, purchaseNo: purchaseNo.get(d.purchaseId) } : d)),
@@ -346,6 +356,99 @@ function applyPrivacy(raw) {
     repairs: raw.repairs.filter((r) => !hiddenRepairs.has(r.id)),
     payments: payments.map((p) => (p.refType === 'purchase' && purchaseNo.has(p.refId) ? { ...p, refNo: purchaseNo.get(p.refId) } : p)),
   };
+}
+
+/**
+ * Accessories sold on private bills (net of private returns) vanish while locked the same way a
+ * privately sold phone does: the pieces come off the purchases they were bought on (the serial's
+ * own purchase; for counted items the newest purchases first), then off the opening stock.
+ * Returns accCut: Map(purchaseId → { lines, amount removed }) and the accessories list with the
+ * opening stock reduced where needed.
+ */
+function hideAccessories(raw) {
+  const qty = new Map(); // accessoryId → pieces sold privately
+  const serials = new Map(); // SERIAL → count (sold − returned) on private bills
+  const take = (doc, sign) => {
+    for (const l of accLines(doc)) {
+      qty.set(l.accessoryId, (qty.get(l.accessoryId) || 0) + sign * lineQty(l));
+      for (const s of l.serials || []) serials.set(cleanSerial(s), (serials.get(cleanSerial(s)) || 0) + sign);
+    }
+  };
+  for (const s of raw.sales) if (s.hidden) take(s, 1);
+  for (const x of raw.returns) if (x.hidden && x.kind === 'sale') take(x, -1);
+  const accCut = new Map();
+  if (![...qty.values()].some((v) => v > 0)) return { accCut, accessories: raw.accessories };
+
+  // working copy of every purchase accessory line, oldest purchase first (old stock goes first,
+  // so a purchase just entered always shows what was entered)
+  const work = new Map();
+  const order = [...raw.purchases].filter((p) => accLines(p).length).sort((a, b) => (a.date || '').localeCompare(b.date || '') || tsOf(a) - tsOf(b));
+  for (const p of order) work.set(p.id, { lines: accLines(p).map((l) => ({ ...l, serials: [...(l.serials || [])] })), amount: 0 });
+  const cutLine = (pid, l, n, serial) => {
+    const w = work.get(pid);
+    const rate = num(l.rate);
+    l.qty = lineQty(l) - n;
+    l.amount = round2(num(l.amount) - rate * n);
+    if (serial) l.serials = l.serials.filter((s) => cleanSerial(s) !== serial);
+    w.amount = round2(w.amount + rate * n);
+    w.touched = true;
+  };
+  const openingCut = new Map(); // accessoryId → { qty, serials:Set }
+
+  for (const [accId, n0] of qty) {
+    let n = n0;
+    if (n <= 0) continue;
+    // serials first: off the very purchase line that brought them in
+    for (const [k, c] of serials) {
+      if (c <= 0 || n <= 0) continue;
+      let done = false;
+      for (const p of order) {
+        const l = work.get(p.id).lines.find((x) => x.accessoryId === accId && x.serials.some((s) => cleanSerial(s) === k));
+        if (l) { cutLine(p.id, l, 1, k); done = true; break; }
+      }
+      if (!done) {
+        const o = openingCut.get(accId) || { qty: 0, serials: new Set() };
+        const a = raw.accessories.find((x) => x.id === accId);
+        if (!(a?.openingSerials || []).some((s) => cleanSerial(s) === k)) continue; // not this item's serial
+        o.qty += 1;
+        o.serials.add(k);
+        openingCut.set(accId, o);
+      }
+      serials.set(k, 0);
+      n -= 1;
+    }
+    // counted pieces: the opening stock first, then the oldest purchases
+    const acc = raw.accessories.find((x) => x.id === accId);
+    if (n > 0 && acc?.track !== 'serial') {
+      const o = openingCut.get(accId) || { qty: 0, serials: new Set() };
+      const k = Math.min(n, Math.max(0, Math.round(num(acc?.openingQty)) - o.qty));
+      if (k > 0) {
+        o.qty += k;
+        openingCut.set(accId, o);
+        n -= k;
+      }
+    }
+    for (const p of order) {
+      if (n <= 0) break;
+      for (const l of work.get(p.id).lines) {
+        if (n <= 0) break;
+        if (l.accessoryId !== accId || l.serials.length) continue;
+        const k = Math.min(n, lineQty(l));
+        if (k > 0) { cutLine(p.id, l, k); n -= k; }
+      }
+    }
+  }
+  for (const [pid, w] of work) if (w.touched) accCut.set(pid, { lines: w.lines.filter((l) => lineQty(l) > 0), amount: w.amount });
+  const accessories = raw.accessories.map((a) => {
+    const o = openingCut.get(a.id);
+    if (!o) return a;
+    return {
+      ...a,
+      openingQty: Math.max(0, Math.round(num(a.openingQty)) - o.qty),
+      openingSerials: (a.openingSerials || []).filter((s) => !o.serials.has(cleanSerial(s))),
+    };
+  });
+  return { accCut, accessories };
 }
 
 /** Returns a function that renumbers e.g. PUR-0005 → PUR-0004 when one hidden number sits below it. */

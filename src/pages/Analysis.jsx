@@ -6,11 +6,12 @@ import { Kpi } from '../components/ui';
 import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
 import { MoneyBars, BarList } from '../components/Charts';
 import { money, num, round2, inRange, monthKey, fmtMonth, fmtDate, fmtDateShort, addDays, today, deviceName } from '../lib/format';
+import { accLines, lineQty } from '../lib/accessories';
 
 const pct = (a, b) => (b ? `${((a / b) * 100).toFixed(1)}%` : '0.0%');
 
 export default function Analysis() {
-  const { sales, purchases, expenses, devices, payments, settings, returns } = useData();
+  const { sales, purchases, expenses, devices, payments, settings, returns, accessories, accStock, stockAdjustments } = useData();
   const [range, setRange] = useState(defaultRange);
 
   const r = useMemo(() => {
@@ -29,7 +30,13 @@ export default function Analysis() {
     const tax = sum(S, (s) => s.tax) - sum(SR, (x) => x.tax);
     const cogs = sum(S, (s) => s.cost) - sum(SR, (x) => x.cost);
     const prGain = sum(PR, (x) => x.profit); // + gain / − loss on phones sent back
-    const gross = sum(S, (s) => s.profit) - sum(SR, (x) => x.profit) + prGain;
+    // accessory stock found (+) / damaged or lost (−) in the period, at cost
+    const ADJ = stockAdjustments.filter((x) => inRange(x.date, range.from, range.to));
+    const adjAmt = sum(ADJ, (x) => (num(x.qty) < 0 ? -num(x.value) : num(x.value)));
+    const gross = sum(S, (s) => s.profit) - sum(SR, (x) => x.profit) + prGain + adjAmt;
+    const pcs = (docs) => docs.reduce((t, d) => t + accLines(d).reduce((u, l) => u + lineQty(l), 0), 0);
+    const accSold = pcs(S) - pcs(SR);
+    const accBought = pcs(P) - pcs(PR);
     const exp = sum(E, (e) => e.amount);
     const sold = S.reduce((t, s) => t + s.items.length, 0) - SR.reduce((t, x) => t + x.items.length, 0);
     const bought = P.reduce((t, p) => t + p.items.length, 0) - PR.reduce((t, x) => t + x.items.length, 0);
@@ -76,6 +83,10 @@ export default function Analysis() {
       const b = buckets.get(keyOf(x.date));
       if (b) b.net += num(x.profit);
     }
+    for (const x of ADJ) {
+      const b = buckets.get(keyOf(x.date));
+      if (b) b.net += num(x.qty) < 0 ? -num(x.value) : num(x.value);
+    }
     const label = (k) => (daily ? fmtDateShort(k) : fmtMonth(k));
     const full = (k) => (daily ? fmtDate(k) : fmtMonth(k));
     const revSeries = [...buckets.entries()].map(([k, b]) => ({ label: label(k), fullLabel: full(k), value: round2(b.rev), count: b.n }));
@@ -103,6 +114,30 @@ export default function Analysis() {
         }
       return [...m.values()].filter((g) => g.n > 0).map((g) => ({ ...g, profit: g.rev - g.cost })).sort((a, b) => b.rev - a.rev);
     };
+    // accessories: by category and by item (revenue = line amount, before GST like phones' price)
+    const accGroup = (keyFn) => {
+      const m = new Map();
+      for (const s of S)
+        for (const l of accLines(s)) {
+          const k = keyFn(l);
+          const g = m.get(k) || { key: k, n: 0, rev: 0, cost: 0 };
+          g.n += lineQty(l);
+          g.rev += num(l.amount);
+          g.cost += num(l.cost);
+          m.set(k, g);
+        }
+      for (const x of SR)
+        for (const l of accLines(x)) {
+          const g = m.get(keyFn(l));
+          if (!g) continue;
+          g.n -= lineQty(l);
+          g.rev -= num(l.value);
+          g.cost -= num(l.cost);
+        }
+      return [...m.values()].filter((g) => g.n > 0).map((g) => ({ ...g, profit: g.rev - g.cost })).sort((a, b) => b.rev - a.rev);
+    };
+    const accCats = accGroup((l) => l.category || 'Other');
+    const accTop = accGroup((l) => l.name).slice(0, 10);
     const brands = group((it) => it.brand || 'Other');
     const conds = group((it) => it.condition || 'Used');
     const models = group((it) => `${it.brand} ${it.model}`).slice(0, 10);
@@ -165,6 +200,14 @@ export default function Analysis() {
       srCount: SR.length,
       prCount: PR.length,
       prGain,
+      adjAmt,
+      adjCount: ADJ.length,
+      accSold,
+      accBought,
+      accCats,
+      accTop,
+      accStockValue: [...accStock.values()].reduce((t, st) => t + st.value, 0),
+      accStockPieces: [...accStock.values()].reduce((t, st) => t + Math.max(0, st.qty), 0),
       sold,
       bought,
       bills: S.length,
@@ -183,7 +226,7 @@ export default function Analysis() {
       modes: [...modes.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value),
       aging,
     };
-  }, [sales, purchases, expenses, devices, payments, returns, range]);
+  }, [sales, purchases, expenses, devices, payments, returns, range, accStock, stockAdjustments]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const period = `${range.from ? fmtDate(range.from) : 'Beginning'} to ${range.to ? fmtDate(range.to) : 'Today'}`;
 
@@ -199,17 +242,18 @@ export default function Analysis() {
     rows: [
       { k: `Sales (${r.bills} bills)`, v: r.grossSales },
       ...(r.srCount ? [{ k: `Less: Sales returns (${r.srCount} credit notes)`, v: r.salesReturns }] : []),
-      { k: `Net sales (${r.sold} devices)`, v: r.revenue },
+      { k: `Net sales (${r.sold} devices${r.accSold ? `, ${r.accSold} accessories` : ''})`, v: r.revenue },
       { k: 'Less: GST collected', v: r.tax },
-      { k: 'Less: Cost of devices sold (incl. repair)', v: r.cogs },
+      { k: `Less: Cost of goods sold (devices incl. repair${r.accSold ? ' + accessories' : ''})`, v: r.cogs },
       ...(r.prCount ? [{ k: `${r.prGain >= 0 ? 'Add: Gain' : 'Less: Loss'} on purchase returns`, v: Math.abs(r.prGain) }] : []),
+      ...(r.adjCount ? [{ k: `${r.adjAmt >= 0 ? 'Add: Accessory stock found' : 'Less: Accessory stock damaged / lost'} (${r.adjCount} adjustments)`, v: Math.abs(r.adjAmt) }] : []),
       { k: 'Gross profit', v: r.gross },
       { k: 'Less: Expenses', v: r.exp },
       { k: 'Net profit', v: r.net },
       { k: 'Purchases in period', v: r.purchGross },
       ...(r.prCount ? [{ k: `Less: Purchase returns (${r.prCount} debit notes)`, v: r.purchReturns }] : []),
-      { k: `Net purchases (${r.bought} devices)`, v: r.purchTotal },
-      { k: `Closing stock value (${r.stockCount} devices)`, v: r.stockValue },
+      { k: `Net purchases (${r.bought} devices${r.accBought ? `, ${r.accBought} accessories` : ''})`, v: r.purchTotal },
+      { k: `Closing stock value (${r.stockCount} devices${r.accStockPieces ? `, ${r.accStockPieces} accessories` : ''})`, v: r.stockValue + r.accStockValue },
     ],
   });
 
@@ -239,13 +283,13 @@ export default function Analysis() {
         </div>
 
         <div className="kpis cascade">
-          <Kpi inverse icon={IndianRupee} label="Net sales" value={money(r.revenue)} sub={r.srCount ? `${r.bills} bills · less ${money(r.salesReturns)} returns` : `${r.bills} bills · ${r.sold} devices`} />
+          <Kpi inverse icon={IndianRupee} label="Net sales" value={money(r.revenue)} sub={r.srCount ? `${r.bills} bills · less ${money(r.salesReturns)} returns` : `${r.bills} bills · ${r.sold} devices${r.accSold ? ` · ${r.accSold} acc.` : ''}`} />
           <Kpi icon={TrendingUp} label="Gross profit" value={money(r.gross)} sub={`Margin ${pct(r.gross, r.revenue - r.tax)}`} />
           <Kpi icon={Receipt} label="Expenses" value={money(r.exp)} />
-          <Kpi icon={Percent} label="Net profit" value={money(r.net)} sub="Gross profit − expenses" />
+          <Kpi icon={Percent} label="Net profit" value={money(r.net)} sub={r.adjCount ? `Gross profit − expenses · stock adj. ${money(r.adjAmt)}` : 'Gross profit − expenses'} />
           <Kpi icon={ShoppingBag} label="Net purchases" value={money(r.purchTotal)} sub={r.prCount ? `${r.bought} devices · less ${money(r.purchReturns)} returns` : `${r.bought} devices`} />
           <Kpi icon={ShoppingCart} label="Avg. selling price" value={money(r.avg)} sub="Per device, before GST" />
-          <Kpi icon={Boxes} label="Stock value" value={money(r.stockValue)} sub={`${r.stockCount} devices now`} />
+          <Kpi icon={Boxes} label="Stock value" value={money(r.stockValue + r.accStockValue)} sub={`${r.stockCount} devices${r.accStockPieces ? ` + ${r.accStockPieces} accessories` : ''} now`} />
         </div>
 
         <div className="grid grid-2">
@@ -312,6 +356,33 @@ export default function Analysis() {
             <BarList rows={r.models.map((m) => ({ label: m.key, value: m.rev, sub: `${m.n} sold · profit ${money(m.profit)}` }))} empty="No sales in this period." />
           </section>
         </div>
+
+        {(r.accCats.length > 0 || accessories.length > 0) && (
+          <div className="grid grid-2">
+            <section className="card card-lg">
+              <div className="card-head"><h2>Accessories by category</h2></div>
+              <table className="table">
+                <thead><tr><th>Category</th><th className="num">Pieces</th><th className="num">Revenue</th><th className="num">Profit</th><th className="num">Margin</th></tr></thead>
+                <tbody>
+                  {r.accCats.map((c) => (
+                    <tr key={c.key}>
+                      <td className="cell-main">{c.key}</td>
+                      <td className="num">{c.n}</td>
+                      <td className="num">{money(c.rev)}</td>
+                      <td className="num">{money(c.profit)}</td>
+                      <td className="num">{pct(c.profit, c.rev)}</td>
+                    </tr>
+                  ))}
+                  {!r.accCats.length && <tr><td colSpan={5} className="muted">No accessories sold in this period.</td></tr>}
+                </tbody>
+              </table>
+            </section>
+            <section className="card card-lg">
+              <div className="card-head"><h2>Top accessories</h2></div>
+              <BarList rows={r.accTop.map((m) => ({ label: m.key, value: m.rev, sub: `${m.n} sold · profit ${money(m.profit)}` }))} empty="No accessories sold in this period." />
+            </section>
+          </div>
+        )}
 
         <div className="grid grid-2">
           <section className="card card-lg">

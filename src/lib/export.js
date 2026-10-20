@@ -1,5 +1,6 @@
 import { moneyPdf, plain, fmtDate, amountInWords, num } from './format';
 import { stateName } from './gst';
+import { accLines, lineQty } from './accessories';
 
 const SHOP_DEFAULT = 'IBELL MOBILE';
 
@@ -271,22 +272,39 @@ export async function invoicePdf(sale, settings, { action = 'download' } = {}) {
   // customer copy: no internal details (condition, stock SN)
   const device = (it) => [it.brand, it.model, it.variant, it.color].filter(Boolean).join(' ');
   const imeis = (it) => [it.imei, it.imei2].filter(Boolean).join('\n');
+  // accessories: name × qty @ rate, serial numbers in the IMEI column
+  const acc = accLines(sale);
+  const accName = (l) => (lineQty(l) > 1 ? `${l.name}\n${lineQty(l)} x ${plain(l.rate)}` : l.name);
+  const accSerials = (l) => ((l.serials || []).length ? l.serials.join('\n') : '-');
+  const itemHead = acc.length ? 'Item' : 'Device';
+  const idHead = acc.length ? 'IMEI / Serial' : 'IMEI';
+  const n0 = sale.items.length;
   autoTable(doc, {
     ...tableTheme,
     startY: y,
     ...(taxInvoice
       ? {
-          head: [['#', 'Device', 'HSN', 'IMEI', 'Warranty', 'Taxable value', `GST ${sale.taxPercent}%`, 'Amount']],
-          body: sale.items.map((it, i) => {
-            const taxable = it.taxable ?? it.price;
-            const gst = it.gst ?? 0;
-            return [i + 1, device(it), it.hsn || settings?.hsnDefault || '8517', imeis(it), it.warranty || '-', plain(taxable), plain(gst), plain(taxable + gst)];
-          }),
+          head: [['#', itemHead, 'HSN', idHead, 'Warranty', 'Taxable value', `GST ${sale.taxPercent}%`, 'Amount']],
+          body: [
+            ...sale.items.map((it, i) => {
+              const taxable = it.taxable ?? it.price;
+              const gst = it.gst ?? 0;
+              return [i + 1, device(it), it.hsn || settings?.hsnDefault || '8517', imeis(it), it.warranty || '-', plain(taxable), plain(gst), plain(taxable + gst)];
+            }),
+            ...acc.map((l, i) => {
+              const taxable = l.taxable ?? l.amount;
+              const gst = l.gst ?? 0;
+              return [n0 + i + 1, accName(l), l.hsn || settings?.hsnDefault || '8517', accSerials(l), l.warranty || '-', plain(taxable), plain(gst), plain(num(taxable) + num(gst))];
+            }),
+          ],
           columnStyles: { 0: { cellWidth: 8 }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } },
         }
       : {
-          head: [['#', 'Device', 'IMEI', 'Warranty', 'Amount']],
-          body: sale.items.map((it, i) => [i + 1, device(it), imeis(it), it.warranty || '-', plain(it.price)]),
+          head: [['#', itemHead, idHead, 'Warranty', 'Amount']],
+          body: [
+            ...sale.items.map((it, i) => [i + 1, device(it), imeis(it), it.warranty || '-', plain(it.price)]),
+            ...acc.map((l, i) => [n0 + i + 1, accName(l), accSerials(l), l.warranty || '-', plain(l.amount)]),
+          ],
           columnStyles: { 0: { cellWidth: 9 }, 4: { halign: 'right' } },
         }),
   });
@@ -423,8 +441,8 @@ export async function returnNotePdf(note, settings, { refunded = 0, output = 'sa
     ],
     columns: [
       { header: '#', key: 'n' },
-      { header: 'Device', key: 'device' },
-      { header: 'IMEI', key: 'imei' },
+      { header: accLines(note).length ? 'Item' : 'Device', key: 'device' },
+      { header: accLines(note).length ? 'IMEI / Serial' : 'IMEI', key: 'imei' },
       ...(gst
         ? [
             { header: 'HSN', key: 'hsn' },
@@ -434,15 +452,26 @@ export async function returnNotePdf(note, settings, { refunded = 0, output = 'sa
         : []),
       { header: 'Amount', key: 'value', money: true },
     ],
-    rows: note.items.map((i, n) => ({
-      n: n + 1,
-      device: [i.brand, i.model, i.variant, i.color].filter(Boolean).join(' '),
-      imei: [i.imei, i.imei2].filter(Boolean).join(' / '),
-      hsn: i.hsn || settings?.hsnDefault || '',
-      taxable: i.taxable,
-      gst: i.gst,
-      value: i.value,
-    })),
+    rows: [
+      ...note.items.map((i, n) => ({
+        n: n + 1,
+        device: [i.brand, i.model, i.variant, i.color].filter(Boolean).join(' '),
+        imei: [i.imei, i.imei2].filter(Boolean).join(' / '),
+        hsn: i.hsn || settings?.hsnDefault || '',
+        taxable: i.taxable,
+        gst: i.gst,
+        value: i.value,
+      })),
+      ...accLines(note).map((l, n) => ({
+        n: note.items.length + n + 1,
+        device: `${l.name} x ${lineQty(l)}`,
+        imei: (l.serials || []).join(' / ') || '-',
+        hsn: l.hsn || settings?.hsnDefault || '',
+        taxable: l.taxable,
+        gst: l.gst,
+        value: l.value,
+      })),
+    ],
     summary: [
       ...(gst
         ? [
@@ -477,18 +506,27 @@ export function purchaseVoucherPdf(p, settings, { output = 'save' } = {}) {
     ],
     columns: [
       { header: '#', key: 'n' },
-      { header: 'Device', key: 'device' },
-      { header: 'IMEI', key: 'imei' },
+      { header: accLines(p).length ? 'Item' : 'Device', key: 'device' },
+      { header: accLines(p).length ? 'IMEI / Serial' : 'IMEI', key: 'imei' },
       { header: 'Condition', key: 'cond' },
       { header: 'Amount', key: 'price', money: true },
     ],
-    rows: p.items.map((i, n) => ({
-      n: n + 1,
-      device: [i.brand, i.model, i.variant, i.color].filter(Boolean).join(' '),
-      imei: [i.imei, i.imei2].filter(Boolean).join(' / '),
-      cond: i.condition,
-      price: i.price,
-    })),
+    rows: [
+      ...p.items.map((i, n) => ({
+        n: n + 1,
+        device: [i.brand, i.model, i.variant, i.color].filter(Boolean).join(' '),
+        imei: [i.imei, i.imei2].filter(Boolean).join(' / '),
+        cond: i.condition,
+        price: i.price,
+      })),
+      ...accLines(p).map((l, n) => ({
+        n: p.items.length + n + 1,
+        device: `${l.name} x ${lineQty(l)} @ ${plain(l.rate)}`,
+        imei: (l.serials || []).join(' / ') || '-',
+        cond: 'New',
+        price: l.amount,
+      })),
+    ],
     summary: [
       ['Subtotal', `Rs. ${plain(p.subtotal)}`],
       ...(num(p.otherCharges) ? [['Other charges', `Rs. ${plain(p.otherCharges)}`]] : []),

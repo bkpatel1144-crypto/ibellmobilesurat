@@ -8,6 +8,7 @@ import { MoneyBars, BarList } from '../components/Charts';
 import { money, num, round2, inRange, monthKey, fmtMonth, fmtDate, fmtDateShort, addDays, today, deviceName } from '../lib/format';
 import { accLines, lineQty } from '../lib/accessories';
 
+
 const pct = (a, b) => (b ? `${((a / b) * 100).toFixed(1)}%` : '0.0%');
 
 export default function Analysis() {

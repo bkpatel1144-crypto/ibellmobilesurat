@@ -29,6 +29,15 @@ export default function Stock() {
   const [repairDevice, setRepairDevice] = useState(null);
   const [editing, setEditing] = useState(null);
   const [printLabelsFor, labelBusy] = useLabels();
+  // tick several phones in stock → one bill with all of them
+  const [picked, setPicked] = useState(() => new Set());
+  const togglePick = (id) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
 
   /** Only a phone still in stock can go; the last phone of a purchase takes the purchase with it. */
   const remove = async (d) => {
@@ -103,9 +112,13 @@ export default function Stock() {
     foot: { name: `${rows.length} devices`, cost: rows.reduce((s, d) => s + cost(d), 0) },
   });
 
+  const sellable = rows.filter((d) => d.status === 'in_stock');
+  const pickedRows = devices.filter((d) => picked.has(d.id) && d.status === 'in_stock');
+  const allPicked = sellable.length > 0 && sellable.every((d) => picked.has(d.id));
+
   const pg = usePaged(rows, {
     resetOn: [status, cond, q],
-    sort: [(d) => deviceName(d), (d) => d.imei, (d) => d.condition, (d) => d.supplierName, ...(showCost ? [(d) => num(d.purchasePrice) + num(d.repairCost)] : []), (d) => d.status, null],
+    sort: [null, (d) => deviceName(d), (d) => d.imei, (d) => d.condition, (d) => d.supplierName, ...(showCost ? [(d) => num(d.purchasePrice) + num(d.repairCost)] : []), (d) => d.status, null],
   });
 
   return (
@@ -166,12 +179,39 @@ export default function Stock() {
               <ExportButtons build={exportSpec} small />
             </div>
           </div>
+          {pickedRows.length > 0 && (
+            <div className="bulk-bar" role="region" aria-label="Selected phones">
+              <b>{pickedRows.length} selected</b>
+              <span className="small muted">{showCost ? `cost ${money(pickedRows.reduce((t, d) => t + cost(d), 0))}` : 'ready to sell together'}</span>
+              <div className="row" style={{ gap: 8, marginLeft: 'auto' }}>
+                <button className="btn btn-sm" onClick={() => setPicked(new Set())}>Clear</button>
+                <button className="btn btn-sm" disabled={labelBusy} onClick={() => printLabelsFor(pickedRows)}><Barcode size={15} /> Labels</button>
+                <button className="btn btn-sm btn-primary" onClick={() => navigate(`/sales/new?devices=${pickedRows.map((d) => d.id).join(',')}`)}>
+                  <ShoppingCart size={15} /> Sell {pickedRows.length} together
+                </button>
+              </div>
+            </div>
+          )}
           {rows.length ? (
             <>
             <div className="table-wrap">
               <table className="table" {...pg.tableProps}>
                 <thead>
                   <tr>
+                    <th className="pick">
+                      <input
+                        type="checkbox"
+                        checked={allPicked}
+                        disabled={!sellable.length}
+                        onChange={() => setPicked((p) => {
+                          const n = new Set(p);
+                          sellable.forEach((d) => (allPicked ? n.delete(d.id) : n.add(d.id)));
+                          return n;
+                        })}
+                        aria-label="Select every phone in stock in this list"
+                        title="Select all in stock"
+                      />
+                    </th>
                     <th>Device</th>
                     <th>IMEI</th>
                     <th>Condition</th>
@@ -183,7 +223,12 @@ export default function Stock() {
                 </thead>
                 <tbody>
                   {pg.rows.map((d) => (
-                    <tr key={d.id}>
+                    <tr key={d.id} className={picked.has(d.id) ? 'picked' : ''}>
+                      <td className="pick">
+                        {d.status === 'in_stock' && (
+                          <input type="checkbox" checked={picked.has(d.id)} onChange={() => togglePick(d.id)} aria-label={`Select ${deviceName(d)} ${d.imei}`} />
+                        )}
+                      </td>
                       <td>
                         <div className="cell-main">{deviceName(d)}</div>
                         <div className="cell-sub">

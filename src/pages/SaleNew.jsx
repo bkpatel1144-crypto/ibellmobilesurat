@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Search, Trash2, Save, Printer, Paperclip, ScanLine, Headphones, X } from 'lucide-react';
+import { Search, Trash2, Save, Printer, Paperclip, ScanLine, Headphones, X, ListPlus, CheckCircle2, XCircle, Rows3, LayoutList } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
@@ -12,6 +12,8 @@ import { createSale, CASH_ACCOUNT } from '../lib/db';
 import { money, num, round2, today, cleanImei, deviceName, amountText } from '../lib/format';
 import { gstApplies, billTotals, splitGst, validGstin, stateOf, stateName } from '../lib/gst';
 import { cleanSerial, lineCost, billCountText } from '../lib/accessories';
+import { beep } from '../lib/beep';
+import ScanMany from '../components/ScanMany';
 
 let seq = 0;
 
@@ -32,6 +34,8 @@ export default function SaleNew() {
   const initial = () => {
     const pre = params.get('device');
     const d = pre && devices.find((x) => x.id === pre && x.status === 'in_stock');
+    // Stock → "Sell selected": ?devices=id1,id2,…
+    const many = (params.get('devices') || '').split(',').filter(Boolean).map((id) => devices.find((x) => x.id === id && x.status === 'in_stock')).filter(Boolean);
     const preAcc = params.get('accessory');
     const a = preAcc && accessories.find((x) => x.id === preAcc && accStock.get(x.id)?.qty > 0);
     return {
@@ -40,7 +44,7 @@ export default function SaleNew() {
       customerPhone: '',
       customerAddress: '',
       date: today(),
-      items: d ? [lineFor(d, settings)] : [],
+      items: many.length ? many.map((x) => lineFor(x, settings)) : d ? [lineFor(d, settings)] : [],
       accessories: a ? [accLineFor(a)] : [],
       discount: '',
       taxPercent: null, // null = automatic from the GST settings and payment mode
@@ -59,8 +63,26 @@ export default function SaleNew() {
   const [pickOpen, setPickOpen] = useState(false);
   const [openId, setOpenId] = useState({});
   const blurTimer = useRef();
+  const scanBox = useRef(); // the scan box in the Items card
+  const scanInput = useRef();
+  const [scanMsg, setScanMsg] = useState(null); // { ok, text } - result of the last scan
+  const [scanVisible, setScanVisible] = useState(true);
+  const [manyOpen, setManyOpen] = useState(false);
+  const [view, setView] = useState(null); // null = automatic: compact rows from 3 phones on
+  const [focusKey, setFocusKey] = useState(null); // price box to focus (a phone picked with the mouse)
+  const [bulkPrice, setBulkPrice] = useState('');
+
+  // when the scan box scrolls out of sight, a scan bar sticks to the bottom of the screen
+  useEffect(() => {
+    const el = scanBox.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return undefined;
+    const io = new IntersectionObserver(([e]) => setScanVisible(e.isIntersecting), { rootMargin: '-72px 0px 0px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
 
   const chosen = new Set(f.items.map((i) => i.deviceId));
+  const compact = view ? view === 'compact' : f.items.length >= 3;
   const stock = useMemo(() => devices.filter((d) => d.status === 'in_stock'), [devices]);
   const matches = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -91,8 +113,10 @@ export default function SaleNew() {
       .slice(0, 15);
   }, [accessories, accStock, q]);
 
-  const addDevice = (d) => {
-    setF((p) => ({ ...p, items: [...p.items, lineFor(d, settings)] }));
+  const addDevice = (d, focusPrice = true) => {
+    const line = lineFor(d, settings);
+    setF((p) => ({ ...p, items: [...p.items, line] }));
+    setFocusKey(focusPrice ? line.key : null);
     setQ('');
     setPickOpen(false); // never leave the list over the line just added; typing opens it again
   };
@@ -119,24 +143,116 @@ export default function SaleNew() {
   const setAcc = (i, patch) => setF((p) => ({ ...p, accessories: p.accessories.map((l, j) => (j === i ? { ...l, ...patch } : l)) }));
   const setPay = useCallback((v) => setF((p) => ({ ...p, ...v })), []);
 
-  // exact IMEI / SN, accessory barcode or accessory serial typed or scanned + Enter → add straight away
+  /** What is already on the bill, as keys: d:<device> · s:<serial> · a:<accessory>#<n> (counted pieces). */
+  const takenFrom = (p) => {
+    const t = new Set(p.items.map((i) => `d:${i.deviceId}`));
+    for (const l of p.accessories) {
+      for (const x of l.serials) t.add(`s:${x}`);
+      if (!l.serials.length) for (let n = 0; n < Math.round(num(l.qty)); n += 1) t.add(`a:${l.accessoryId}#${n}`);
+    }
+    return t;
+  };
+
+  /**
+   * One scanned code → what it is, or why it can't be added. Used by the scan box and "Scan many".
+   *   phone IMEI / IMEI 2 / SN · accessory serial · accessory barcode (counted items: one piece per scan)
+   */
+  const resolveCode = useCallback(
+    (raw, taken) => {
+      const code = cleanImei(raw);
+      if (!code) return { ok: false, reason: 'Empty' };
+      const low = code.toLowerCase();
+      const d = devices.find((x) => x.imei === code || x.imei2 === code || (x.sn && x.sn.toLowerCase() === low));
+      if (d) {
+        if (taken.has(`d:${d.id}`)) return { ok: false, reason: `${deviceName(d)} is already on this bill` };
+        if (d.status !== 'in_stock') {
+          const why = { sold: `already sold${d.saleNo ? ` on ${d.saleNo}` : ''}`, in_repair: 'at repair', returned: 'returned to the supplier' }[d.status] || 'not in stock';
+          return { ok: false, reason: `${deviceName(d)} is ${why}` };
+        }
+        return { ok: true, kind: 'device', key: `d:${d.id}`, label: deviceName(d), sub: [d.sn, d.imei, d.color].filter(Boolean).join(' · '), add: { d } };
+      }
+      const k = cleanSerial(code);
+      const bySerial = accessories.find((a) => accStock.get(a.id)?.serials.has(k));
+      if (bySerial) {
+        if (taken.has(`s:${k}`)) return { ok: false, reason: `${bySerial.name} ${k} is already on this bill` };
+        if (!(accStock.get(bySerial.id).serials.get(k).count > 0)) return { ok: false, reason: `${bySerial.name} ${k} is not in stock (sold)` };
+        return { ok: true, kind: 'accessory', key: `s:${k}`, label: bySerial.name, sub: `Serial ${k}`, add: { a: bySerial, serial: k } };
+      }
+      const a = accessories.find((x) => (x.code || '').toUpperCase() === code.toUpperCase());
+      if (a) {
+        if (a.track === 'serial') return { ok: false, reason: `${a.name}: scan the serial number on the piece` };
+        let used = 0;
+        while (taken.has(`a:${a.id}#${used}`)) used += 1;
+        const st = accStock.get(a.id);
+        if (used >= (st?.qty || 0)) return { ok: false, reason: `${a.name}: only ${Math.max(0, st?.qty || 0)} in stock` };
+        return { ok: true, kind: 'accessory', key: `a:${a.id}#${used}`, label: a.name, sub: `${a.code} · 1 piece`, add: { a } };
+      }
+      return { ok: false, reason: 'Not found - check the number' };
+    },
+    [devices, accessories, accStock],
+  );
+
+  /** Puts scanned results on the bill (price: one selling price for every phone, optional). */
+  const applyResults = (list, price = null) => {
+    if (!list.length) return;
+    setF((p) => {
+      const items = [...p.items];
+      const acc = p.accessories.map((l) => ({ ...l, serials: [...l.serials] }));
+      for (const r of list) {
+        if (r.kind === 'device') {
+          const line = lineFor(r.add.d, settings);
+          if (price) line.price = String(price);
+          items.push(line);
+          continue;
+        }
+        const { a, serial } = r.add;
+        const l = acc.find((x) => x.accessoryId === a.id);
+        if (!l) acc.push(accLineFor(a, serial || ''));
+        else if (serial) l.serials.push(serial);
+        else l.qty = String(Math.round(num(l.qty)) + 1);
+      }
+      return { ...p, items, accessories: acc };
+    });
+    setFocusKey(null);
+  };
+
+  // Enter in the scan box: an exact code is added at once (the cursor stays here for the next scan);
+  // typed text with a single match adds that match.
   const onSearchKey = (e) => {
     if (e.key !== 'Enter') return;
     e.preventDefault();
-    const imei = cleanImei(q);
-    if (!imei) return;
-    const exact = stock.find(
-      (d) => !chosen.has(d.id) && (d.imei === imei || d.imei2 === imei || (d.sn && d.sn.toLowerCase() === imei.toLowerCase())),
-    );
-    if (exact) return addDevice(exact);
-    const code = imei.toUpperCase();
-    const byCode = accessories.find((a) => (a.code || '').toUpperCase() === code && accStock.get(a.id)?.qty > 0);
-    if (byCode) return addAccessory(byCode);
-    const serial = cleanSerial(imei);
-    const bySerial = accessories.find((a) => accStock.get(a.id)?.serials.get(serial)?.count > 0);
-    if (bySerial) return addAccessory(bySerial, serial);
-    if (matches.length === 1 && !accMatches.length) addDevice(matches[0]);
-    else if (!matches.length && accMatches.length === 1) addAccessory(accMatches[0]);
+    const code = cleanImei(q);
+    if (!code) return;
+    // a serial-tracked accessory's box barcode: add its line, then pick / scan the serials
+    const boxCode = accessories.find((a) => a.track === 'serial' && (a.code || '').toUpperCase() === code.toUpperCase() && accStock.get(a.id)?.qty > 0);
+    if (boxCode) return addAccessory(boxCode);
+    const r = resolveCode(code, takenFrom(f));
+    if (r.ok) {
+      applyResults([r]);
+      beep('ok');
+      setScanMsg({ ok: true, text: `${r.label} added${r.kind === 'device' ? ` · ${r.add.d.imei}` : ''}` });
+      setQ('');
+      setPickOpen(false);
+      return;
+    }
+    if (matches.length === 1 && !accMatches.length && !/^\d{8,}$/.test(code)) return addDevice(matches[0]);
+    if (!matches.length && accMatches.length === 1 && !/^\d{8,}$/.test(code)) return addAccessory(accMatches[0]);
+    beep('error');
+    setScanMsg({ ok: false, text: `${code}: ${r.reason}` });
+    setQ('');
+  };
+
+  // compact price rows: Enter goes to the next phone's price, after the last one back to the scan box
+  const priceKey = (i) => (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const next = document.querySelector(`[data-price-index="${i + 1}"]`);
+    if (next) next.focus();
+    else scanInput.current?.focus();
+  };
+  const setAllPrices = (onlyEmpty) => {
+    if (!(num(bulkPrice) > 0)) return;
+    setF((p) => ({ ...p, items: p.items.map((it) => (onlyEmpty && num(it.price) > 0 ? it : { ...it, price: String(num(bulkPrice)) })) }));
   };
 
   // GST: automatic from Settings → Billing (e.g. only on bank payments), can be changed per bill
@@ -211,7 +327,7 @@ export default function SaleNew() {
 
   return (
     <form
-      className="page"
+      className={`page ${scanVisible ? "" : "has-dock"}`}
       onSubmit={(e) => {
         e.preventDefault();
         save(false);
@@ -287,10 +403,20 @@ export default function SaleNew() {
         <section className="card card-lg">
           <div className="card-head">
             <h2>Items ({f.items.length + f.accessories.length})</h2>
-            <span className="muted small">{stock.length} phones in stock</span>
+            <div className="row" style={{ gap: 6 }}>
+              <span className="muted small hide-sm">{stock.length} phones in stock</span>
+              {f.items.length > 1 && (
+                <button type="button" className="btn btn-sm" onClick={() => setView(compact ? 'cards' : 'compact')} title={compact ? 'Show each phone with all details' : 'One row per phone'}>
+                  {compact ? <LayoutList size={15} /> : <Rows3 size={15} />} {compact ? 'Details' : 'Compact'}
+                </button>
+              )}
+              <button type="button" className="btn btn-sm" onClick={() => setManyOpen(true)} title="Scan many phones one after another, or paste a list of IMEIs">
+                <ListPlus size={15} /> Scan many
+              </button>
+            </div>
           </div>
 
-          <div className="combo" style={{ marginBottom: 16 }}>
+          <div className="combo" style={{ marginBottom: scanMsg ? 8 : 16 }} ref={scanBox}>
             <div className="input-group">
               {q ? <Search size={16} /> : <ScanLine size={16} />}
               <input
@@ -301,10 +427,11 @@ export default function SaleNew() {
                   setQ(e.target.value);
                   setPickOpen(true);
                 }}
-                onFocus={() => setPickOpen(true)}
+                onClick={() => setPickOpen(true)}
                 onBlur={() => (blurTimer.current = setTimeout(() => setPickOpen(false), 150))}
                 onKeyDown={onSearchKey}
                 aria-label="Find device"
+                ref={scanInput}
               />
             </div>
             {pickOpen && (
@@ -341,9 +468,85 @@ export default function SaleNew() {
             )}
           </div>
 
+          {scanMsg && (
+            <div className={`scan-msg ${scanMsg.ok ? 'ok' : 'bad'}`} role="status" aria-live="polite">
+              {scanMsg.ok ? <CheckCircle2 size={16} /> : <XCircle size={16} />} {scanMsg.text}
+            </div>
+          )}
+
           {f.items.length || f.accessories.length ? (
             <div className="stack">
-              {f.items.map((it, i) => {
+              {compact && f.items.length > 0 && (
+                <div className="stack-sm">
+                  <div className="row" style={{ gap: 6 }}>
+                    <span className="small muted">Price for every phone</span>
+                    <input className="input num" inputMode="decimal" style={{ width: 130 }} value={bulkPrice} onChange={(e) => setBulkPrice(amountText(e.target.value))} aria-label="Price for every phone" />
+                    <button type="button" className="btn btn-sm" disabled={!(num(bulkPrice) > 0)} onClick={() => setAllPrices(true)}>Fill empty</button>
+                    <button type="button" className="btn btn-sm" disabled={!(num(bulkPrice) > 0)} onClick={() => setAllPrices(false)}>Set all</button>
+                  </div>
+                  <div className="table-wrap">
+                    <table className="table sale-rows">
+                      <thead>
+                        <tr><th>#</th><th>Phone</th><th className="num">Selling price (₹)</th><th>Warranty</th><th className="actions">Actions</th></tr>
+                      </thead>
+                      <tbody>
+                        {f.items.map((it, i) => {
+                          const d = devMap.get(it.deviceId);
+                          const c = num(d?.purchasePrice) + num(d?.repairCost);
+                          const proof = openId[it.key] || it.idFiles.length || it.idType;
+                          return [
+                            <tr key={it.key}>
+                              <td className="tnum muted">{i + 1}</td>
+                              <td>
+                                <div className="cell-main">{deviceName(d)} {d?.color && <span className="muted">· {d.color}</span>}</div>
+                                <div className="cell-sub mono">{[d?.sn, d?.imei, d?.battery != null && `BH ${d.battery}%`].filter(Boolean).join(' · ')}</div>
+                              </td>
+                              <td className="num">
+                                <label className="row-field">
+                                  <span className="sr-only">Selling price (₹)</span>
+                                  <input
+                                    className="input num"
+                                    inputMode="decimal"
+                                    value={it.price}
+                                    onChange={(e) => setItem(i, { price: amountText(e.target.value) })}
+                                    onKeyDown={priceKey(i)}
+                                    data-price-index={i}
+                                    autoFocus={it.key === focusKey}
+                                    aria-invalid={errors.length > 0 && !(num(it.price) > 0)}
+                                  />
+                                </label>
+                                {canProfit && num(it.price) > 0 && <div className="cell-sub">margin {money(num(it.price) - c)}</div>}
+                              </td>
+                              <td>
+                                <label className="row-field">
+                                  <span className="sr-only">Warranty</span>
+                                  <input className="input" value={it.warranty} onChange={(e) => setItem(i, { warranty: e.target.value })} placeholder="e.g. 6 months" />
+                                </label>
+                              </td>
+                              <td className="actions">
+                                <div className="row-actions">
+                                  <button type="button" className={`btn btn-sm btn-icon ${proof ? 'btn-primary' : ''}`} title="Buyer ID proof" aria-label={`Buyer ID proof for ${deviceName(d)}`} onClick={() => setOpenId((o) => ({ ...o, [it.key]: !o[it.key] }))}>
+                                    <Paperclip size={14} />
+                                  </button>
+                                  <button type="button" className="btn btn-sm btn-icon btn-danger" aria-label="Remove device" onClick={() => setF((p) => ({ ...p, items: p.items.filter((_, j) => j !== i) }))}>
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>,
+                            openId[it.key] && (
+                              <tr key={`${it.key}-id`}>
+                                <td colSpan={5}><IdProofEditor title={`Buyer ID proof · ${deviceName(d)}`} value={it} onChange={(v) => setItem(i, v)} /></td>
+                              </tr>
+                            ),
+                          ];
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {!compact && f.items.map((it, i) => {
                 const d = devMap.get(it.deviceId);
                 const c = num(d?.purchasePrice) + num(d?.repairCost);
                 return (
@@ -372,7 +575,7 @@ export default function SaleNew() {
                     </div>
                     <div className="form-grid">
                       <Field label="Selling price (₹)" required hint={canProfit ? `Cost ${money(c)}${num(it.price) ? ` · margin ${money(num(it.price) - c)}` : ''}` : undefined}>
-                        <input className="input num" type="number" min="0" step="0.01" value={it.price} onChange={(e) => setItem(i, { price: e.target.value })} autoFocus={i === f.items.length - 1} />
+                        <input className="input num" type="number" min="0" step="0.01" value={it.price} onChange={(e) => setItem(i, { price: e.target.value })} autoFocus={it.key === focusKey} />
                       </Field>
                       <Field label="Warranty">
                         <input className="input" placeholder="e.g. 6 months shop warranty" value={it.warranty} onChange={(e) => setItem(i, { warranty: e.target.value })} />
@@ -542,6 +745,40 @@ export default function SaleNew() {
           </div>
         </section>
       </div>
+
+      {!scanVisible && (
+        <div className="scan-dock glass--large" role="region" aria-label="Quick scan">
+          <div className="input-group" style={{ flex: '1 1 220px' }}>
+            <ScanLine size={16} />
+            <input
+              className="input"
+              placeholder="Scan next IMEI / barcode / serial…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={onSearchKey}
+              aria-label="Quick scan"
+            />
+          </div>
+          {scanMsg && <span className={`scan-dock-msg ${scanMsg.ok ? 'pos' : 'neg'}`}>{scanMsg.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />} {scanMsg.text}</span>}
+          <span className="small muted num hide-sm">{billCountText({ items: f.items, accessories: f.accessories.map((l) => ({ qty: accQty(l) })) })} · <b>{money(total)}</b></span>
+          <button type="button" className="btn btn-sm" onClick={() => setManyOpen(true)}><ListPlus size={15} /> <span className="hide-sm">Scan many</span></button>
+          <button className="btn btn-sm btn-primary" disabled={Boolean(busy)}><Save size={15} /> Save</button>
+        </div>
+      )}
+
+      <ScanMany
+        open={manyOpen}
+        onClose={() => {
+          setManyOpen(false);
+          setTimeout(() => scanInput.current?.focus(), 50);
+        }}
+        resolve={resolveCode}
+        takenOnBill={takenFrom(f)}
+        onAdd={(list, price) => {
+          applyResults(list, price);
+          setScanMsg({ ok: true, text: `${list.length} item${list.length === 1 ? '' : 's'} added` });
+        }}
+      />
     </form>
   );
 }

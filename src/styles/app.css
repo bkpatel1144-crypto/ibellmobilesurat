@@ -3244,3 +3244,155 @@ button.chip:focus-visible,
 .chip-x:hover {
   background: color-mix(in srgb, currentColor 15%, transparent);
 }
+
+/* ============ Multi-device sale ============ */
+.scan-msg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.scan-msg.ok {
+  color: var(--color-status-success);
+}
+
+.scan-msg.bad {
+  color: var(--color-error);
+}
+
+/* the scan bar that sticks to the bottom once the scan box scrolls away */
+.scan-dock {
+  position: fixed;
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 30;
+  width: min(880px, calc(100vw - 32px));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-capsule);
+  animation: scan-dock-in 0.18s ease-out;
+}
+
+.scan-dock .input {
+  height: 40px;
+}
+
+.scan-dock-msg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes scan-dock-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-dock {
+    animation: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .scan-dock {
+    border-radius: var(--radius-card);
+  }
+}
+
+/* compact one-row-per-phone list */
+.sale-rows .row-field {
+  display: block;
+}
+
+.sale-rows td.num .input {
+  width: 130px;
+  text-align: right;
+}
+
+.sale-rows td .input {
+  height: 38px;
+  min-width: 120px;
+}
+
+/* Scan many */
+.scan-many-box {
+  min-height: 240px;
+}
+
+.scan-many-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--color-outline);
+  border-radius: var(--radius-control);
+}
+
+.scan-many-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-outline);
+}
+
+.scan-many-row:last-child {
+  border-bottom: 0;
+}
+
+.scan-many-row svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.scan-many-row.bad .cell-sub {
+  color: var(--color-error);
+}
+
+@media (max-width: 640px) {
+  .scan-dock .hide-sm,
+  .card-head .hide-sm {
+    display: none;
+  }
+}
+
+/* Stock: tick phones → sell together */
+.table th.pick,
+.table td.pick {
+  width: 40px;
+  text-align: center;
+}
+
+.table tr.picked td {
+  background: var(--color-status-info-wash);
+}
+
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-control);
+  background: var(--color-status-info-wash);
+}
+
+/* room under the page so the scan bar never covers the last buttons */
+.page.has-dock {
+  padding-bottom: 96px;
+}

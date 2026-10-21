@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Search, Trash2, Save, Printer, Paperclip, ScanLine, Headphones, X, ListPlus, CheckCircle2, XCircle, Rows3, LayoutList } from 'lucide-react';
 import { useData } from '../context/DataContext';
@@ -63,23 +63,12 @@ export default function SaleNew() {
   const [pickOpen, setPickOpen] = useState(false);
   const [openId, setOpenId] = useState({});
   const blurTimer = useRef();
-  const scanBox = useRef(); // the scan box in the Items card
   const scanInput = useRef();
   const [scanMsg, setScanMsg] = useState(null); // { ok, text } - result of the last scan
-  const [scanVisible, setScanVisible] = useState(true);
   const [manyOpen, setManyOpen] = useState(false);
   const [view, setView] = useState(null); // null = automatic: compact rows from 3 phones on
   const [focusKey, setFocusKey] = useState(null); // price box to focus (a phone picked with the mouse)
   const [bulkPrice, setBulkPrice] = useState('');
-
-  // when the scan box scrolls out of sight, a scan bar sticks to the bottom of the screen
-  useEffect(() => {
-    const el = scanBox.current;
-    if (!el || typeof IntersectionObserver === 'undefined') return undefined;
-    const io = new IntersectionObserver(([e]) => setScanVisible(e.isIntersecting), { rootMargin: '-72px 0px 0px 0px' });
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
 
   const chosen = new Set(f.items.map((i) => i.deviceId));
   const compact = view ? view === 'compact' : f.items.length >= 3;
@@ -327,7 +316,7 @@ export default function SaleNew() {
 
   return (
     <form
-      className={`page ${scanVisible ? "" : "has-dock"}`}
+      className="page"
       onSubmit={(e) => {
         e.preventDefault();
         save(false);
@@ -416,7 +405,7 @@ export default function SaleNew() {
             </div>
           </div>
 
-          <div className="combo" style={{ marginBottom: scanMsg ? 8 : 16 }} ref={scanBox}>
+          <div className="combo" style={{ marginBottom: scanMsg ? 8 : 16 }}>
             <div className="input-group">
               {q ? <Search size={16} /> : <ScanLine size={16} />}
               <input
@@ -745,26 +734,6 @@ export default function SaleNew() {
           </div>
         </section>
       </div>
-
-      {!scanVisible && (
-        <div className="scan-dock glass--large" role="region" aria-label="Quick scan">
-          <div className="input-group" style={{ flex: '1 1 220px' }}>
-            <ScanLine size={16} />
-            <input
-              className="input"
-              placeholder="Scan next IMEI / barcode / serial…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={onSearchKey}
-              aria-label="Quick scan"
-            />
-          </div>
-          {scanMsg && <span className={`scan-dock-msg ${scanMsg.ok ? 'pos' : 'neg'}`}>{scanMsg.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />} {scanMsg.text}</span>}
-          <span className="small muted num hide-sm">{billCountText({ items: f.items, accessories: f.accessories.map((l) => ({ qty: accQty(l) })) })} · <b>{money(total)}</b></span>
-          <button type="button" className="btn btn-sm" onClick={() => setManyOpen(true)}><ListPlus size={15} /> <span className="hide-sm">Scan many</span></button>
-          <button className="btn btn-sm btn-primary" disabled={Boolean(busy)}><Save size={15} /> Save</button>
-        </div>
-      )}
 
       <ScanMany
         open={manyOpen}

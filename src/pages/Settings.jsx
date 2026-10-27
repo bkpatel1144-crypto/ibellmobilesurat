@@ -35,6 +35,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { usePrefs } from '../context/PrefsContext';
 import { PageHeader } from '../components/Layout';
+import DataFix from '../components/DataFix';
 import { Field, Segmented, Modal, useConfirm } from '../components/ui';
 import PasskeyModal from '../components/PasskeyModal';
 import RowActions from '../components/RowActions';
@@ -1147,6 +1148,9 @@ function DataTab() {
             </tbody>
           </table>
         </div>
+      </Section>
+      <Section title="Check & fix old data" desc="Finds records from before the latest updates that now count twice or don't settle bills. Nothing changes until you press a button - take a backup first.">
+        <DataFix />
       </Section>
       <Section title="How big can it get?">
         <div className="small stack-sm" style={{ lineHeight: 1.6 }}>

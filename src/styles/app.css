@@ -3338,3 +3338,10 @@ button.chip:focus-visible,
   border-radius: var(--radius-control);
   background: var(--color-status-info-wash);
 }
+
+/* Settings → Data → Check & fix old data */
+.fix-block {
+  padding: 14px 16px;
+  border: 1px solid var(--color-outline);
+  border-radius: var(--radius-control);
+}

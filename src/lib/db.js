@@ -1633,6 +1633,41 @@ export async function deleteExpense(id, e = {}) {
   logActivity({ action: 'delete', entity: 'expense', refId: id, amount: e.amount ?? null, note: [e.category, e.paidTo].filter(Boolean).join(' · ') });
 }
 
+/* ------------------------------------------------------------------ fixing old data (Settings → Data) */
+
+/** Runs a list of batch steps in chunks (Firestore takes at most 500 writes per batch). */
+async function inChunks(items, step, size = 200) {
+  for (let i = 0; i < items.length; i += size) {
+    const batch = writeBatch(db);
+    items.slice(i, i + size).forEach((x) => step(batch, x));
+    await batch.commit();
+  }
+}
+
+/** Removes repair costs that were also entered as expenses (the repair already counts them). */
+export async function removeDuplicateRepairExpenses(pairs /* [{ expense, repair }] */) {
+  await inChunks(pairs, (batch, { expense: e, repair: r }) => {
+    batch.delete(doc(db, 'expenses', e.id));
+    logActivity({ action: 'delete', entity: 'expense', refId: e.id, amount: e.amount ?? null, note: `Duplicate of repair ${r.deviceName || ''} ${r.imei || ''} (data fix)`.trim() }, batch);
+  });
+}
+
+/** Links "on account" payments with a typed name to the party of that name. */
+export async function linkPaymentsToParties(list /* [{ payment, party }] */) {
+  await inChunks(list, (batch, { payment: p, party }) => {
+    batch.update(doc(db, 'payments', p.id), { partyId: party.id, partyName: party.name, updatedAt: serverTimestamp(), updatedBy: who() });
+    logActivity({ action: 'update', entity: 'payment', refId: p.id, refNo: p.refNo || '', amount: p.amount, note: `Linked to party ${party.name} (data fix)`, hidden: Boolean(p.hidden) }, batch);
+  });
+}
+
+/** Payments of a bill that no longer exists become "on account" money of the same party. */
+export async function movePaymentsOnAccount(list /* [payment] */) {
+  await inChunks(list, (batch, p) => {
+    batch.update(doc(db, 'payments', p.id), { refType: 'manual', refId: null, refNo: '', note: [p.note, `was on ${p.refNo || 'a deleted bill'}`].filter(Boolean).join(' · '), updatedAt: serverTimestamp(), updatedBy: who() });
+    logActivity({ action: 'update', entity: 'payment', refId: p.id, refNo: p.refNo || '', amount: p.amount, note: `Moved to on account - ${p.refNo || 'bill'} no longer exists (data fix)`, hidden: Boolean(p.hidden) }, batch);
+  });
+}
+
 /* ------------------------------------------------------------------ stock audits */
 
 /** Audits are kept for this many days, then deleted automatically. */

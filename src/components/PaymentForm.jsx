@@ -12,7 +12,7 @@ import { useToast } from '../context/ToastContext';
  * preset: { direction, partyId, partyName, refType, refId, refNo, amount }
  */
 export default function PaymentForm({ open, onClose, payment, preset }) {
-  const { sales, purchases, privacy } = useData();
+  const { sales, purchases, privacy, settleWith } = useData();
   const toast = useToast();
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -55,6 +55,28 @@ export default function PaymentForm({ open, onClose, payment, preset }) {
       .filter((p) => p.partyId === f.partyId && round2(num(p.due)) > 0)
       .map((p) => ({ refType: 'purchase', id: p.id, no: p.purchaseNo, date: p.date, due: round2(num(p.due)) }));
   }, [f?.partyId, f?.direction, sales, purchases]);
+
+  // Money "on account" (no bill chosen) settles the party's old balance first, then their oldest
+  // open bills (see withSettlement). Show exactly where it lands before saving.
+  const amount = num(f?.amount);
+  const preview = useMemo(() => {
+    if (!open || payment || !f?.partyId || f.refType !== 'manual' || !(amount > 0)) return null;
+    const dir = f.direction === 'in' ? 'in' : 'out';
+    const kind = dir === 'in' ? 'sales' : 'purchases';
+    const before = settleWith([]);
+    const after = settleWith([{ id: '__preview', direction: dir, amount, partyId: f.partyId, partyName: f.partyName, refType: 'manual', date: f.date }]);
+    const old = new Map(before[kind].map((b) => [b.id, b]));
+    const rows = [];
+    for (const b of after[kind]) {
+      if (b.partyId !== f.partyId) continue;
+      const cut = round2(num(old.get(b.id)?.due) - num(b.due));
+      if (cut > 0.004) rows.push({ id: b.id, no: b.invoiceNo || b.purchaseNo, date: b.date, cut, left: round2(num(b.due)) });
+    }
+    rows.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const adv = round2((after.advances.get(f.partyId)?.[dir] || 0) - (before.advances.get(f.partyId)?.[dir] || 0));
+    const opening = round2(amount - rows.reduce((t, r) => t + r.cut, 0) - adv);
+    return { rows, adv, opening: opening > 0.004 ? opening : 0 };
+  }, [open, payment, f?.partyId, f?.partyName, f?.refType, f?.direction, f?.date, amount, settleWith]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!f) return null;
 
@@ -145,6 +167,24 @@ export default function PaymentForm({ open, onClose, payment, preset }) {
           </Field>
           <PaymentFields mode={f.mode} accountId={f.accountId} onChange={setPay} />
         </div>
+        {preview && (
+          <div className="sub-box small pay-preview" role="status" aria-label="Where this payment goes">
+            <div className="field-label" style={{ marginBottom: 6 }}>Where this {money(amount)} goes</div>
+            {preview.opening > 0 && (
+              <div className="row-between"><span>Old balance (opening)</span><span className="num">{money(preview.opening)}</span></div>
+            )}
+            {preview.rows.map((r) => (
+              <div className="row-between" key={r.id}>
+                <span>{r.no} <span className="muted">· {fmtDate(r.date)}</span></span>
+                <span className="num">{money(r.cut)} <span className={r.left > 0.004 ? 'neg' : 'pos'}>{r.left > 0.004 ? `· ${money(r.left)} still due` : '· settled'}</span></span>
+              </div>
+            ))}
+            {preview.adv > 0 && (
+              <div className="row-between"><span>Kept as advance {f.direction === 'in' ? 'for their next bill' : 'for their next purchase'}</span><span className="num">{money(preview.adv)}</span></div>
+            )}
+            {bills.length > 0 && <p className="xs muted" style={{ margin: '6px 0 0' }}>Oldest first. To put it on one bill only, choose it in “Against bill” above.</p>}
+          </div>
+        )}
         <Field label="Note">
           <input className="input" value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />
         </Field>

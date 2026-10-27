@@ -12,7 +12,7 @@ import { accLines, lineQty } from '../lib/accessories';
 const pct = (a, b) => (b ? `${((a / b) * 100).toFixed(1)}%` : '0.0%');
 
 export default function Analysis() {
-  const { sales, purchases, expenses, devices, payments, settings, returns, accessories, accStock, stockAdjustments } = useData();
+  const { sales, purchases, expenses, devices, payments, settings, returns, accessories, accStock, stockAdjustments, repairs } = useData();
   const [range, setRange] = useState(defaultRange);
 
   const r = useMemo(() => {
@@ -39,6 +39,8 @@ export default function Analysis() {
     const accSold = pcs(S) - pcs(SR);
     const accBought = pcs(P) - pcs(PR);
     const exp = sum(E, (e) => e.amount);
+    // phone repairs finished in the period - already inside each phone's cost (counted once, at sale)
+    const repairSpend = sum(repairs.filter((x) => x.status === 'done' && inRange(x.doneDate || x.sentDate, range.from, range.to)), (x) => x.cost);
     const sold = S.reduce((t, s) => t + s.items.length, 0) - SR.reduce((t, x) => t + x.items.length, 0);
     const bought = P.reduce((t, p) => t + p.items.length, 0) - PR.reduce((t, x) => t + x.items.length, 0);
     const purchGross = sum(P, (p) => p.total);
@@ -201,6 +203,7 @@ export default function Analysis() {
       srCount: SR.length,
       prCount: PR.length,
       prGain,
+      repairSpend,
       adjAmt,
       adjCount: ADJ.length,
       accSold,
@@ -227,7 +230,7 @@ export default function Analysis() {
       modes: [...modes.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value),
       aging,
     };
-  }, [sales, purchases, expenses, devices, payments, returns, range, accStock, stockAdjustments]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sales, purchases, expenses, devices, payments, returns, range, accStock, stockAdjustments, repairs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const period = `${range.from ? fmtDate(range.from) : 'Beginning'} to ${range.to ? fmtDate(range.to) : 'Today'}`;
 
@@ -250,6 +253,7 @@ export default function Analysis() {
       ...(r.adjCount ? [{ k: `${r.adjAmt >= 0 ? 'Add: Accessory stock found' : 'Less: Accessory stock damaged / lost'} (${r.adjCount} adjustments)`, v: Math.abs(r.adjAmt) }] : []),
       { k: 'Gross profit', v: r.gross },
       { k: 'Less: Expenses', v: r.exp },
+      ...(r.repairSpend ? [{ k: 'Phone repairs done in period (already in the cost of the phones, not deducted again)', v: r.repairSpend }] : []),
       { k: 'Net profit', v: r.net },
       { k: 'Purchases in period', v: r.purchGross },
       ...(r.prCount ? [{ k: `Less: Purchase returns (${r.prCount} debit notes)`, v: r.purchReturns }] : []),
@@ -286,7 +290,7 @@ export default function Analysis() {
         <div className="kpis cascade">
           <Kpi inverse icon={IndianRupee} label="Net sales" value={money(r.revenue)} sub={r.srCount ? `${r.bills} bills · less ${money(r.salesReturns)} returns` : `${r.bills} bills · ${r.sold} devices${r.accSold ? ` · ${r.accSold} acc.` : ''}`} />
           <Kpi icon={TrendingUp} label="Gross profit" value={money(r.gross)} sub={`Margin ${pct(r.gross, r.revenue - r.tax)}`} />
-          <Kpi icon={Receipt} label="Expenses" value={money(r.exp)} />
+          <Kpi icon={Receipt} label="Expenses" value={money(r.exp)} sub={r.repairSpend ? `+ repairs ${money(r.repairSpend)} (in phone cost)` : 'Shop running costs'} />
           <Kpi icon={Percent} label="Net profit" value={money(r.net)} sub={r.adjCount ? `Gross profit − expenses · stock adj. ${money(r.adjAmt)}` : 'Gross profit − expenses'} />
           <Kpi icon={ShoppingBag} label="Net purchases" value={money(r.purchTotal)} sub={r.prCount ? `${r.bought} devices · less ${money(r.purchReturns)} returns` : `${r.bought} devices`} />
           <Kpi icon={ShoppingCart} label="Avg. selling price" value={money(r.avg)} sub="Per device, before GST" />

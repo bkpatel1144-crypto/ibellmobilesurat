@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Search, Receipt } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Plus, Search, Receipt, Wrench, History } from 'lucide-react';
 import RowActions from '../components/RowActions';
 import { useData } from '../context/DataContext';
 import { useToast } from '../context/ToastContext';
 import { PageHeader } from '../components/Layout';
-import { Empty, Kpi, Modal, Field, useConfirm } from '../components/ui';
+import { Empty, Kpi, Modal, Field, Segmented, StatusChip, useConfirm } from '../components/ui';
 import { DateRange, ExportButtons, PRESETS, defaultRange } from '../components/Filters';
 import Pager from '../components/Pager';
 import { usePaged } from '../lib/usePaged';
@@ -14,8 +15,11 @@ import { saveExpense, deleteExpense, CASH_ACCOUNT } from '../lib/db';
 import { accountName } from '../lib/ledger';
 import { money, num, fmtDate, inRange, byDateDesc, today, EXPENSE_CATEGORIES } from '../lib/format';
 
+/** Finished phone repairs show here too, read-only - they are edited on the Repairs page. */
+export const REPAIR_CATEGORY = 'Phone repair';
+
 export default function Expenses() {
-  const { expenses, accounts, settings } = useData();
+  const { expenses, accounts, settings, repairs, payments, devices } = useData();
   const canDelete = useData().can('deleteRecords');
   const toast = useToast();
   const [confirmDialog, confirm] = useConfirm();
@@ -23,19 +27,61 @@ export default function Expenses() {
   const [cat, setCat] = useState('all');
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState(null);
+  const [kind, setKind] = useState('all'); // all · shop · repair
 
   const categories = useMemo(() => [...new Set([...EXPENSE_CATEGORIES, ...expenses.map((e) => e.category)])], [expenses]);
 
-  const inPeriod = useMemo(() => expenses.filter((e) => inRange(e.date, range.from, range.to)), [expenses, range]);
+  // repairs as expense rows: finished ones by the day they were done (cost known); phones still at
+  // repair show in the Repairs view only, with the cost pending
+  const repairRows = useMemo(() => {
+    const paidBy = new Map();
+    for (const x of payments) if (x.refType === 'repair' && x.refId) paidBy.set(x.refId, (paidBy.get(x.refId) || 0) + num(x.amount));
+    const devMap = new Map(devices.map((d) => [d.id, d]));
+    return repairs
+      .filter((r) => r.status === 'done' || r.status === 'in_repair')
+      .map((r) => {
+        const done = r.status === 'done';
+        const paid = paidBy.get(r.id) || 0;
+        return {
+          id: `repair-${r.id}`,
+          repair: r,
+          device: devMap.get(r.deviceId),
+          date: done ? r.doneDate || r.sentDate : r.sentDate,
+          category: REPAIR_CATEGORY,
+          paidTo: r.partyName || r.repairer || 'Repairer',
+          note: [r.deviceName, r.issue].filter(Boolean).join(' · '),
+          amount: done ? num(r.cost) : 0,
+          paid,
+          owed: done && r.partyId ? Math.max(0, num(r.cost) - paid) : 0,
+          pending: !done,
+          createdAt: r.createdAt,
+        };
+      });
+  }, [repairs, payments, devices]);
+
+  const shopInPeriod = useMemo(() => expenses.filter((e) => inRange(e.date, range.from, range.to)), [expenses, range]);
+  const repairsInPeriod = useMemo(() => repairRows.filter((r) => inRange(r.date, range.from, range.to)), [repairRows, range]);
+  const inPeriod = useMemo(() => [...shopInPeriod, ...repairsInPeriod.filter((r) => !r.pending)], [shopInPeriod, repairsInPeriod]);
   const rows = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return inPeriod
+    const list = kind === 'shop' ? shopInPeriod : kind === 'repair' ? repairsInPeriod : inPeriod;
+    return list
       .filter((e) => cat === 'all' || e.category === cat)
-      .filter((e) => !s || (e.paidTo || '').toLowerCase().includes(s) || (e.note || '').toLowerCase().includes(s) || e.category.toLowerCase().includes(s))
+      .filter(
+        (e) =>
+          !s ||
+          (e.paidTo || '').toLowerCase().includes(s) ||
+          (e.note || '').toLowerCase().includes(s) ||
+          e.category.toLowerCase().includes(s) ||
+          (e.repair?.imei || '').includes(s),
+      )
       .sort(byDateDesc);
-  }, [inPeriod, cat, q]);
+  }, [kind, shopInPeriod, repairsInPeriod, inPeriod, cat, q]);
 
   const total = rows.reduce((s, e) => s + num(e.amount), 0);
+  const shopTotal = shopInPeriod.reduce((s, e) => s + num(e.amount), 0);
+  const repairTotal = repairsInPeriod.reduce((s, e) => s + num(e.amount), 0);
+  const repairOwed = repairsInPeriod.reduce((s, e) => s + num(e.owed), 0);
   const byCat = useMemo(() => {
     const m = new Map();
     for (const e of inPeriod) m.set(e.category, (m.get(e.category) || 0) + num(e.amount));
@@ -56,6 +102,7 @@ export default function Expenses() {
     meta: [
       ['Period', `${range.from ? fmtDate(range.from) : 'Beginning'} to ${range.to ? fmtDate(range.to) : 'Today'}`],
       ['Category', cat === 'all' ? 'All' : cat],
+      ['Showing', { all: 'Shop expenses + phone repairs', shop: 'Shop expenses', repair: 'Phone repairs' }[kind]],
     ],
     columns: [
       { header: 'Date', key: 'date' },
@@ -65,12 +112,19 @@ export default function Expenses() {
       { header: 'Mode', key: 'mode' },
       { header: 'Amount', key: 'amt', money: true },
     ],
-    rows: rows.map((e) => ({ date: fmtDate(e.date), cat: e.category, to: e.paidTo, note: e.note, mode: `${e.mode} · ${accountName(accounts, e.accountId)}`, amt: e.amount })),
+    rows: rows.map((e) => ({
+      date: fmtDate(e.date),
+      cat: e.category,
+      to: e.paidTo,
+      note: e.repair ? [e.note, e.repair.imei, e.pending ? 'at repair - cost pending' : e.owed > 0 ? `${money(e.owed)} still owed` : ''].filter(Boolean).join(' · ') : e.note,
+      mode: e.repair ? `Paid ${money(e.paid)}` : `${e.mode} · ${accountName(accounts, e.accountId)}`,
+      amt: e.amount,
+    })),
     foot: { date: 'Total', amt: total },
   });
 
   const pg = usePaged(rows, {
-    resetOn: [range, cat, q],
+    resetOn: [range, cat, q, kind],
     sort: [(e) => e.date, (e) => e.category, (e) => e.paidTo, (e) => e.mode, (e) => num(e.amount), null],
   });
 
@@ -78,7 +132,7 @@ export default function Expenses() {
     <div className="page">
       <PageHeader
         title="Expenses"
-        subtitle="Shop running costs"
+        subtitle="Shop running costs and phone repair spending"
         actions={
           <button className="btn btn-primary" onClick={() => setEditing({})}>
             <Plus size={16} /> Add expense
@@ -94,10 +148,23 @@ export default function Expenses() {
                 <input className="input" placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
               </div>
               <DateRange value={range} onChange={setRange} />
-              <select className="select" style={{ width: 180 }} value={cat} onChange={(e) => setCat(e.target.value)} aria-label="Category">
-                <option value="all">All categories</option>
-                {categories.map((c) => <option key={c}>{c}</option>)}
-              </select>
+              <Segmented
+                label="Show"
+                value={kind}
+                onChange={(v) => { setKind(v); setCat('all'); }}
+                options={[
+                  { value: 'all', label: 'All' },
+                  { value: 'shop', label: 'Shop' },
+                  { value: 'repair', label: 'Repairs' },
+                ]}
+              />
+              {kind !== 'repair' && (
+                <select className="select" style={{ width: 180 }} value={cat} onChange={(e) => setCat(e.target.value)} aria-label="Category">
+                  <option value="all">All categories</option>
+                  {categories.map((c) => <option key={c}>{c}</option>)}
+                  {kind === 'all' && <option>{REPAIR_CATEGORY}</option>}
+                </select>
+              )}
               <div className="row" style={{ marginLeft: 'auto', gap: 8 }}>
                 <ExportButtons build={spec} small />
               </div>
@@ -110,21 +177,45 @@ export default function Expenses() {
                     <tr><th>Date</th><th>Category</th><th>Details</th><th>Paid from</th><th className="num">Amount</th><th className="actions">Actions</th></tr>
                   </thead>
                   <tbody>
-                    {pg.rows.map((e) => (
-                      <tr key={e.id}>
-                        <td className="tnum">{fmtDate(e.date)}</td>
-                        <td><span className="chip plain">{e.category}</span></td>
-                        <td>
-                          <div>{e.paidTo || '—'}</div>
-                          {e.note && <div className="cell-sub">{e.note}</div>}
-                        </td>
-                        <td className="small">{e.mode} · <span className="muted">{accountName(accounts, e.accountId)}</span></td>
-                        <td className="num cell-main">{money(e.amount)}</td>
-                        <td className="actions">
-                          <RowActions onEdit={() => setEditing(e)} onDelete={canDelete ? () => remove(e) : null} editLabel="Edit expense" deleteLabel="Delete expense" />
-                        </td>
-                      </tr>
-                    ))}
+                    {pg.rows.map((e) =>
+                      e.repair ? (
+                        <tr key={e.id}>
+                          <td className="tnum">{fmtDate(e.date)}</td>
+                          <td><span className="chip"><Wrench size={12} /> {e.category}</span></td>
+                          <td>
+                            <div>{e.repair.deviceName} <span className="muted mono small">· {e.repair.imei}</span></div>
+                            <div className="cell-sub">
+                              {[`${e.paidTo}`, e.repair.issue, `sent ${fmtDate(e.repair.sentDate)}`, !e.pending && e.repair.doneDate && `done ${fmtDate(e.repair.doneDate)}`].filter(Boolean).join(' · ')}
+                            </div>
+                            {e.device && <div className="cell-sub">Phone now: <StatusChip status={e.device.status} /></div>}
+                          </td>
+                          <td className="small">
+                            {e.pending ? <span className="chip caution">At repair · cost pending</span> : <>Paid {money(e.paid)}{e.owed > 0 && <div className="neg">{money(e.owed)} still owed</div>}</>}
+                          </td>
+                          <td className="num cell-main">{e.pending ? '—' : money(e.amount)}</td>
+                          <td className="actions">
+                            <div className="row-actions">
+                              <Link className="btn btn-sm btn-icon" to="/repairs" aria-label="Open in Repairs" title="Open in Repairs"><Wrench size={14} /></Link>
+                              <Link className="btn btn-sm btn-icon" to={`/timeline/${e.repair.imei}`} aria-label="IMEI timeline" title="IMEI timeline"><History size={14} /></Link>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        <tr key={e.id}>
+                          <td className="tnum">{fmtDate(e.date)}</td>
+                          <td><span className="chip plain">{e.category}</span></td>
+                          <td>
+                            <div>{e.paidTo || '—'}</div>
+                            {e.note && <div className="cell-sub">{e.note}</div>}
+                          </td>
+                          <td className="small">{e.mode} · <span className="muted">{accountName(accounts, e.accountId)}</span></td>
+                          <td className="num cell-main">{money(e.amount)}</td>
+                          <td className="actions">
+                            <RowActions onEdit={() => setEditing(e)} onDelete={canDelete ? () => remove(e) : null} editLabel="Edit expense" deleteLabel="Delete expense" />
+                          </td>
+                        </tr>
+                      ),
+                    )}
                   </tbody>
                   <tfoot>
                     <tr><td colSpan={4}>Total</td><td className="num">{money(total)}</td><td /></tr>
@@ -134,11 +225,20 @@ export default function Expenses() {
               <Pager {...pg.pager} />
               </>
             ) : (
-              <Empty icon={Receipt} title="No expenses in this period" action={<button className="btn btn-primary" onClick={() => setEditing({})}><Plus size={16} /> Add expense</button>} />
+              <Empty icon={kind === 'repair' ? Wrench : Receipt} title={kind === 'repair' ? 'No phone repairs in this period' : 'No expenses in this period'} action={kind !== 'repair' && <button className="btn btn-primary" onClick={() => setEditing({})}><Plus size={16} /> Add expense</button>} />
             )}
           </section>
           <div className="stack">
-            <Kpi inverse icon={Receipt} label="Total in period" value={money(inPeriod.reduce((s, e) => s + num(e.amount), 0))} sub={`${inPeriod.length} entries`} />
+            <Kpi inverse icon={Receipt} label="All spending in period" value={money(shopTotal + repairTotal)} sub={`Shop ${money(shopTotal)} · repairs ${money(repairTotal)}`} />
+            <Kpi
+              icon={Wrench}
+              label="Phone repairs"
+              value={money(repairTotal)}
+              sub={[`${repairsInPeriod.filter((r) => !r.pending).length} done`, repairsInPeriod.some((r) => r.pending) && `${repairsInPeriod.filter((r) => r.pending).length} at repair`, repairOwed > 0 && `${money(repairOwed)} owed`].filter(Boolean).join(' · ')}
+            />
+            <p className="xs muted" style={{ margin: 0 }}>
+              Repair cost is also part of each phone's cost, so profit counts it once - when the phone is sold.
+            </p>
             <section className="card card-lg">
               <div className="card-head"><h2>By category</h2></div>
               <BarList rows={byCat} empty="Nothing spent in this period." />

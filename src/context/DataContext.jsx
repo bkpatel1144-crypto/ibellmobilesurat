@@ -105,10 +105,13 @@ export function DataProvider({ children }) {
     }
   }, [raw.audits, clock]);
 
+  const base = useMemo(() => (unlocked ? raw : applyPrivacy(raw)), [raw, unlocked]);
   const data = useMemo(() => {
-    const d = withSettlement(unlocked ? raw : applyPrivacy(raw));
+    const d = withSettlement(base);
     return { ...d, accStock: accessoryStock(d), audits: raw.audits.filter((a) => !isExpired(a, clock)) };
-  }, [raw, unlocked, clock]);
+  }, [base, raw.audits, clock]);
+  // "what if": the bills as they would stand with extra payments (payment preview)
+  const settleWith = useCallback((extra) => withSettlement({ ...base, payments: [...base.payments, ...extra] }), [base]);
 
   const accounts = useMemo(() => accountList(data.banks, settings), [data.banks, settings]);
   // true accessory stock (private sales included) - every save checks against this
@@ -167,6 +170,7 @@ export function DataProvider({ children }) {
     ...data,
     raw,
     rawAccStock,
+    settleWith,
     settings,
     accounts,
     me: { email: myEmail, name: meDoc?.name || user?.displayName || myEmail.split('@')[0], role, isOwner: role === 'owner' },
